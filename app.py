@@ -119,14 +119,12 @@ def cached_search(
     currency: str,
     language: str,
     max_stops: int | None,
-    search_api_key: str,
 ) -> list[dict]:
     """即時查多航段行程；同條件 30 分鐘內走快取。"""
     provider = GoogleFlightsProvider(
         currency=currency,
         language=language,
         seat=seat,
-        search_api_key=search_api_key or None,
     )
     offers = provider.search_itinerary(
         list(segments), trip_type=trip_type, max_stops=max_stops
@@ -323,9 +321,8 @@ def render_results(df: pd.DataFrame, currency: str) -> None:
         {
             "google_quote": "fast-flights 擷取報價",
             "fast_flights_quote": "fast-flights 擷取報價",
-            "google_round_trip_total": "Google 往返總價",
+            "fast_flights_round_trip_quote": "fast-flights 往返報價",
             "sum_of_one_way_quotes": "單程票價加總估算",
-            "searchapi_quote": "SearchApi 報價",
         }
     ).fillna("fast-flights 擷取報價")
     view["特價"] = view["is_deal"].map({True: "是", False: ""})
@@ -390,7 +387,6 @@ def run_search(
     requests: list[tuple[tuple[tuple[str, str, str], ...], str]],
     seat: str,
     max_stops: int | None,
-    search_api_key: str,
 ) -> tuple[list[dict], list[str]]:
     """逐個日期組合查詢，單一組合失敗不中斷整批。"""
     rows: list[dict] = []
@@ -406,7 +402,6 @@ def run_search(
                     config.settings.currency,
                     config.settings.language,
                     max_stops,
-                    search_api_key,
                 )
             )
         except Exception as exc:
@@ -486,17 +481,9 @@ def search_tab() -> None:
 
         submitted = st.form_submit_button("搜尋", type="primary", use_container_width=True)
 
-    search_api_key = read_secret("SEARCHAPI_KEY")
-    if search_api_key:
-        st.caption(
-            "即時搜尋使用 fast-flights 官方 SearchApi 整合，幣別為 EUR。"
-            "SearchApi 可能按用量收費，請先確認其方案與額度。"
-        )
-    else:
-        st.caption(
-            "目前使用 fast-flights 免費擷取；Google Flights 網頁與擷取結果可能不同。"
-            "若要使用套件文件推薦的 SearchApi，請在 Streamlit Cloud Secrets 設定 SEARCHAPI_KEY。"
-        )
+    st.caption(
+        "票價使用 fast-flights 免費擷取 Google Flights；擷取結果可能與 Google Flights 網頁顯示不同。"
+    )
     st.caption(
         "往返使用同一次雙航段查詢的總價；開口價格是各段單程報價加總估算。"
         "歷史特價判定目前只套用於單程。"
@@ -538,7 +525,6 @@ def search_tab() -> None:
                 requests,
                 seat,
                 STOP_CHOICES[stops_label],
-                search_api_key,
             )
             # 存進 session_state，避免側欄或下載按鈕觸發 rerun 後結果消失
             st.session_state["search_result"] = {
