@@ -1,0 +1,149 @@
+"""主流程：抓票價 → 對照歷史判定特價 → 寫入 data/。
+
+用法（在專案根目錄執行）：
+    python -m src.pipeline
+"""
+from __future__ import annotations
+
+import logging
+import statistics
+import time
+from collections import defaultdict
+from typing import Any
+
+from .config import AppConfig, load_config
+from .provider import GoogleFlightsProvider
+from .store import append_history, now_iso, read_history, write_snapshot
+
+log = logging.getLogger("flight-deals")
+
+# 歷史樣本不足此數時，不採用「低於中位數」規則，避免誤報
+MIN_SAMPLES_FOR_MEDIAN = 3
+
+BaselineKey = tuple[str, str, str]  # (出發地, 目的地, 出發日)
+
+
+def build_baselines(history: list[dict[str, str]]) -> dict[BaselineKey, list[int]]:
+    """把歷史 CSV 依 (出發地, 目的地, 出發日) 分組，收集價格清單。"""
+    buckets: dict[BaselineKey, list[int]] = defaultdict(list)
+    for row in history:
+        try:
+            price = int(float(row["price"]))
+        except (KeyError, TypeError, ValueError):
+            continue
+        key = (
+            row.get("from_airport", ""),
+            row.get("to_airport", ""),
+            row.get("departure_date", ""),
+        )
+        buckets[key].append(price)
+    return buckets
+
+
+def is_deal(price: int, prices: list[int], rules) -> bool:
+    """票價是否為特價：創歷史新低，或低於歷史中位數一定比例。"""
+    if not prices:
+        return False
+    if rules.below_historical_min and price < min(prices):
+        return True
+    if len(prices) >= MIN_SAMPLES_FOR_MEDIAN:
+        median = statistics.median(prices)
+        if price <= median * (1 - rules.below_median_pct / 100):
+            return True
+    return False
+
+
+def collect_offers(config: AppConfig, baselines: dict[BaselineKey, list[int]]) -> tuple[list[dict], list[dict]]:
+    """逐條航線 × 逐個出發日抓取，回傳 (所有保留的行程, 失敗紀錄)。"""
+    provider = GoogleFlightsProvider(
+        currency=config.settings.currency,
+        language=config.settings.language,
+        seat=config.settings.seat,
+    )
+    dates = config.departure_dates()
+    offers: list[dict] = []
+    failures: list[dict] = []
+
+    for route in config.routes:
+        for departure_date in dates:
+            try:
+                found = provider.search(route.from_airport, route.to_airport, departure_date)
+            except Exception as exc:  # 單條查詢失敗不中斷整批
+                log.warning("查詢失敗 %s→%s %s: %s", route.from_airport, route.to_airport, departure_date, exc)
+                failures.append(
+                    {
+                        "from": route.from_airport,
+                        "to": route.to_airport,
+                        "departure_date": departure_date,
+                        "error": str(exc),
+                    }
+                )
+                continue
+
+            found.sort(key=lambda offer: offer.price)
+            key: BaselineKey = (route.from_airport, route.to_airport, departure_date)
+            prices = baselines.get(key, [])
+
+            for offer in found[: config.settings.top_n]:
+                record = offer.to_dict()
+                record["is_deal"] = is_deal(offer.price, prices, config.deal_rules)
+                record["baseline_median"] = int(statistics.median(prices)) if prices else None
+                offers.append(record)
+
+            time.sleep(config.settings.search_delay_seconds)
+
+    return offers, failures
+
+
+def run(config: AppConfig | None = None) -> dict[str, Any]:
+    config = config or load_config()
+    baselines = build_baselines(read_history())
+    offers, failures = collect_offers(config, baselines)
+    deals = [offer for offer in offers if offer["is_deal"]]
+    observed_at = now_iso()
+
+    payload: dict[str, Any] = {
+        "generated_at": observed_at,
+        "is_sample": False,
+        "currency": config.settings.currency,
+        "routes": [{"from": r.from_airport, "to": r.to_airport} for r in config.routes],
+        "rules": {
+            "below_median_pct": config.deal_rules.below_median_pct,
+            "below_historical_min": config.deal_rules.below_historical_min,
+        },
+        "summary": {
+            "routes_checked": len(config.routes),
+            "queries": len(config.routes) * len(config.departure_dates()),
+            "offers": len(offers),
+            "deals": len(deals),
+            "failures": failures,
+        },
+        "offers": offers,
+        "deals": deals,
+    }
+
+    path = write_snapshot(payload)
+    append_history(offers, observed_at)
+
+    log.info("完成：%d 筆行程、%d 筆特價，寫入 %s", len(offers), len(deals), path)
+    if deals:
+        for deal in deals[:10]:
+            log.info(
+                "特價 %s→%s %s %s %s",
+                deal["from_airport"],
+                deal["to_airport"],
+                deal["departure_date"],
+                deal["price"],
+                config.settings.currency,
+            )
+    return payload
+
+
+def main() -> int:
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    payload = run()
+    return 0 if payload["summary"]["offers"] > 0 else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

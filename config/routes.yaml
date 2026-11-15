@@ -1,0 +1,22 @@
+# 監控設定（無需任何 API Key）
+settings:
+  currency: TWD            # 幣別
+  language: zh-TW          # 語言
+  seat: economy            # economy / premium-economy / business / first
+  top_n: 5                 # 每條航線每個出發日，保留最便宜的幾個行程
+  days_ahead: [14, 30, 60] # 從今天起，往後第 N 天出發
+  search_delay_seconds: 2  # 每次查詢之間隔，避免被擋
+
+# 要監控的航線（三碼機場代碼）
+routes:
+  - from: TPE
+    to: NRT
+  - from: TPE
+    to: BKK
+  - from: TPE
+    to: SGN
+
+# 特價判定規則
+deal_rules:
+  below_median_pct: 30      # 低於歷史中位數 30% 視為特價
+  below_historical_min: true # 或創下歷史新低

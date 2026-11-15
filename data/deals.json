@@ -1,0 +1,145 @@
+{
+  "generated_at": "2026-11-16T02:00:00+00:00",
+  "is_sample": true,
+  "currency": "TWD",
+  "routes": [
+    { "from": "TPE", "to": "NRT" },
+    { "from": "TPE", "to": "BKK" },
+    { "from": "TPE", "to": "SGN" }
+  ],
+  "rules": {
+    "below_median_pct": 30,
+    "below_historical_min": true
+  },
+  "summary": {
+    "routes_checked": 3,
+    "queries": 9,
+    "offers": 8,
+    "deals": 2,
+    "failures": []
+  },
+  "offers": [
+    {
+      "from_airport": "TPE",
+      "to_airport": "NRT",
+      "departure_date": "2026-12-01",
+      "price": 5988,
+      "airlines": ["BR"],
+      "stops": 0,
+      "duration_minutes": 185,
+      "departure_time": "08:40",
+      "arrival_time": "12:45",
+      "is_best": true,
+      "is_deal": true,
+      "baseline_median": 9650,
+      "provider": "google-flights"
+    },
+    {
+      "from_airport": "TPE",
+      "to_airport": "NRT",
+      "departure_date": "2026-12-01",
+      "price": 6300,
+      "airlines": ["JX"],
+      "stops": 0,
+      "duration_minutes": 190,
+      "departure_time": "10:05",
+      "arrival_time": "14:15",
+      "is_best": false,
+      "is_deal": true,
+      "baseline_median": 9650,
+      "provider": "google-flights"
+    },
+    {
+      "from_airport": "TPE",
+      "to_airport": "NRT",
+      "departure_date": "2026-12-01",
+      "price": 9600,
+      "airlines": ["CI"],
+      "stops": 1,
+      "duration_minutes": 420,
+      "departure_time": "06:00",
+      "arrival_time": "14:00",
+      "is_best": false,
+      "is_deal": false,
+      "baseline_median": 9650,
+      "provider": "google-flights"
+    },
+    {
+      "from_airport": "TPE",
+      "to_airport": "BKK",
+      "departure_date": "2026-12-17",
+      "price": 8600,
+      "airlines": ["BR"],
+      "stops": 0,
+      "duration_minutes": 215,
+      "departure_time": "07:30",
+      "arrival_time": "10:05",
+      "is_best": true,
+      "is_deal": false,
+      "baseline_median": 8800,
+      "provider": "google-flights"
+    },
+    {
+      "from_airport": "TPE",
+      "to_airport": "BKK",
+      "departure_date": "2026-12-17",
+      "price": 9100,
+      "airlines": ["VN"],
+      "stops": 1,
+      "duration_minutes": 395,
+      "departure_time": "09:40",
+      "arrival_time": "16:15",
+      "is_best": false,
+      "is_deal": false,
+      "baseline_median": 8800,
+      "provider": "google-flights"
+    },
+    {
+      "from_airport": "TPE",
+      "to_airport": "SGN",
+      "departure_date": "2027-01-15",
+      "price": 7200,
+      "airlines": ["VN"],
+      "stops": 0,
+      "duration_minutes": 205,
+      "departure_time": "07:45",
+      "arrival_time": "10:10",
+      "is_best": true,
+      "is_deal": false,
+      "baseline_median": null,
+      "provider": "google-flights"
+    }
+  ],
+  "deals": [
+    {
+      "from_airport": "TPE",
+      "to_airport": "NRT",
+      "departure_date": "2026-12-01",
+      "price": 5988,
+      "airlines": ["BR"],
+      "stops": 0,
+      "duration_minutes": 185,
+      "departure_time": "08:40",
+      "arrival_time": "12:45",
+      "is_best": true,
+      "is_deal": true,
+      "baseline_median": 9650,
+      "provider": "google-flights"
+    },
+    {
+      "from_airport": "TPE",
+      "to_airport": "NRT",
+      "departure_date": "2026-12-01",
+      "price": 6300,
+      "airlines": ["JX"],
+      "stops": 0,
+      "duration_minutes": 190,
+      "departure_time": "10:05",
+      "arrival_time": "14:15",
+      "is_best": false,
+      "is_deal": true,
+      "baseline_median": 9650,
+      "provider": "google-flights"
+    }
+  ]
+}
