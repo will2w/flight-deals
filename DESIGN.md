@@ -8,6 +8,8 @@
 - 定時抓取指定航線 × 指定出發日的**單程經濟艙**最低票價。
 - 保存歷史票價，據此判定「是否為特價」。
 - 以 Streamlit 網頁呈現：最新票價、特價清單、價格走勢。
+- 在 Streamlit 監控清單新增／移除航線，並回寫 GitHub 設定。
+- 全站票價使用 EUR；行程時長以小時顯示，列出轉機機場。
 - 全部跑在 GitHub 上：Actions 負責排程抓取，Git 倉庫當資料庫，Streamlit Cloud 負責前端。
 
 **非目標（第一版不做）**
@@ -112,7 +114,8 @@ SingleFlight:
 | 檔案 | 職責 | 對外介面 |
 |---|---|---|
 | `config/routes.yaml` | 監控航線、幣別、出發日偏移、特價規則 | 純設定 |
-| `src/config.py` | 讀設定、展開「出發日」清單 | `load_config() -> AppConfig` |
+| `src/config.py` | 讀設定、展開出發日清單 | `load_config() -> AppConfig` |
+| `src/github_config.py` | 使用 Streamlit Secret 的 Fine-grained Token 回寫 `routes.yaml` | `update_routes(...)` |
 | `src/provider.py` | 資料來源；把第三方結構正規化成 `Offer` | `Provider.search(from, to, date) -> list[Offer]` |
 | `src/store.py` | 快照 JSON 與歷史 CSV 讀寫 | `write_snapshot / append_history / load_history` |
 | `src/pipeline.py` | 主流程、特價判定、輸出 | `python -m src.pipeline` |
@@ -135,12 +138,13 @@ SingleFlight:
 {
   "generated_at": "2026-11-16T02:00:00+00:00",
   "is_sample": false,
-  "currency": "TWD",
+  "currency": "EUR",
   "summary": { "routes_checked": 3, "offers": 42, "deals": 5, "failures": [] },
   "offers": [
     {
       "from_airport": "TPE", "to_airport": "NRT", "departure_date": "2026-12-01",
-      "price": 5988, "airlines": ["BR"], "stops": 0, "duration_minutes": 185,
+      "price": 299, "currency": "EUR", "airlines": ["BR"], "stops": 0,
+      "transfer_airports": [], "duration_minutes": 185,
       "departure_time": "08:40", "arrival_time": "12:45",
       "is_best": true, "is_deal": true,
       "baseline_median": 9800, "provider": "google-flights"
@@ -152,9 +156,10 @@ SingleFlight:
 
 **`data/history.csv`（累積歷史，算基準與趨勢用）**
 ```
-observed_at,from_airport,to_airport,departure_date,price,airlines,stops,duration_minutes,...
+observed_at,from_airport,to_airport,departure_date,price,currency,airlines,stops,transfer_airports,duration_minutes,...
 ```
 每一列＝「某次抓取、某航線、某出發日、某個行程的價格」。
+歷史基準只比較相同幣別；舊版缺少幣別欄位的歷史不會混入 EUR 基準。
 
 ---
 

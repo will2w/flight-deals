@@ -17,8 +17,10 @@ HISTORY_FIELDS = [
     "to_airport",
     "departure_date",
     "price",
+    "currency",
     "airlines",
     "stops",
+    "transfer_airports",
     "duration_minutes",
     "departure_time",
     "arrival_time",
@@ -45,18 +47,39 @@ def read_snapshot() -> dict[str, Any] | None:
     return json.loads(SNAPSHOT_PATH.read_text(encoding="utf-8"))
 
 
-def append_history(offers: Iterable[dict[str, Any]], observed_at: str) -> int:
+def append_history(
+    offers: Iterable[dict[str, Any]], observed_at: str, currency: str = "EUR"
+) -> int:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    is_new = not HISTORY_PATH.exists()
+    existing_rows: list[dict[str, str]] = []
+    needs_header = not HISTORY_PATH.exists()
+    if not needs_header:
+        with HISTORY_PATH.open(newline="", encoding="utf-8") as fh:
+            reader = csv.DictReader(fh)
+            old_fields = reader.fieldnames or []
+            existing_rows = list(reader)
+        if old_fields != HISTORY_FIELDS:
+            # 保留舊紀錄，但幣別留空，避免混入新的 EUR 價格基準。
+            with HISTORY_PATH.open("w", newline="", encoding="utf-8") as fh:
+                writer = csv.DictWriter(fh, fieldnames=HISTORY_FIELDS)
+                writer.writeheader()
+                writer.writerows(
+                    {key: row.get(key, "") for key in HISTORY_FIELDS}
+                    for row in existing_rows
+                )
+            needs_header = False
+
     rows = 0
     with HISTORY_PATH.open("a", newline="", encoding="utf-8") as fh:
         writer = csv.DictWriter(fh, fieldnames=HISTORY_FIELDS)
-        if is_new:
+        if needs_header:
             writer.writeheader()
         for offer in offers:
             row = {key: offer.get(key, "") for key in HISTORY_FIELDS}
             row["observed_at"] = observed_at
+            row["currency"] = currency
             row["airlines"] = "|".join(offer.get("airlines") or [])
+            row["transfer_airports"] = "|".join(offer.get("transfer_airports") or [])
             writer.writerow(row)
             rows += 1
     return rows

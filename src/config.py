@@ -20,7 +20,7 @@ class Route:
 
 @dataclass
 class Settings:
-    currency: str = "TWD"
+    currency: str = "EUR"
     language: str = "zh-TW"
     seat: str = "economy"
     top_n: int = 5
@@ -52,7 +52,7 @@ def load_config(path: Path = CONFIG_PATH) -> AppConfig:
     rules = raw.get("deal_rules", {}) or {}
     return AppConfig(
         settings=Settings(
-            currency=str(settings.get("currency", "TWD")),
+            currency=str(settings.get("currency", "EUR")),
             language=str(settings.get("language", "zh-TW")),
             seat=str(settings.get("seat", "economy")),
             top_n=int(settings.get("top_n", 5)),

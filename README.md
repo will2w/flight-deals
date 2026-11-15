@@ -1,7 +1,7 @@
 # 特價機票監控
 
-用 **GitHub Actions 定時抓票價 + Git 當資料庫 + Streamlit 當前端** 的全免費特價機票搜索程序。
-資料來源為 Google Flights（透過 `fast-flights`），**不需要任何 API Key**。
+用 **GitHub Actions 定時抓票價 + Git 當資料庫 + Streamlit 當前端** 的特價機票搜索程序。
+票價資料來源為 Google Flights（透過 `fast-flights`），**不需要航班 API Key**；航班票價與歷史比較統一使用 **EUR**。
 
 架構與設計理由詳見 [DESIGN.md](./DESIGN.md)。
 
@@ -12,6 +12,7 @@ flight-deals/
 ├── config/routes.yaml          # 監控航線與特價規則
 ├── src/
 │   ├── config.py               # 讀設定、展開出發日
+│   ├── github_config.py        # 從 Streamlit 將航線設定保存回 GitHub
 │   ├── provider.py             # Google Flights 資料來源（無 Key）
 │   ├── store.py                # JSON 快照 + CSV 歷史
 │   └── pipeline.py             # 主流程（python -m src.pipeline）
@@ -22,40 +23,34 @@ flight-deals/
 └── .github/workflows/scrape.yml # 排程抓取並自動 commit
 ```
 
-## 本機執行
-
-需要 Python 3.10+。
-
-```bash
-pip install -r requirements.txt
-python -m src.pipeline     # 抓票價，寫入 data/
-streamlit run app.py       # 開啟前端 http://localhost:8501
-```
-
-`data/deals.json` 目前附的是**示範資料**（`is_sample: true`），第一次跑完 pipeline 就會被真實資料覆蓋。
-
 ## 前端功能
 
 `app.py` 分成三個頁籤：
 
 - **即時搜尋**：自己選出發地／目的地（內建約 90 個常用機場）、出發日、艙等與轉機限制，按「搜尋」即時查 Google Flights。可勾「彈性日期 ±N 天」一次比較前後幾天，附各日期最低價柱狀圖，並可下載 CSV。同條件 30 分鐘內走快取。
-- **監控清單**：`config/routes.yaml` 排程抓到的結果，可依航線／價格／轉機篩選，並標出特價。
-- **價格走勢**：以 `data/history.csv` 畫出「某航線某出發日」的最低票價隨時間變化。
+- **監控清單**：在頁面直接新增／移除航線；有設定 GitHub Token 時，可按「保存並更新排程」直接更新 GitHub 的 `config/routes.yaml`，Actions 下次排程即採用新航線。也可下載設定檔後在 GitHub 網頁手動更新。
+- **價格走勢**：以 EUR 歷史價格繪製「某航線某出發日」的最低票價走勢。
 
 機場清單在 `app.py` 的 `AIRPORTS` 字典，可直接增刪。
+行程表會以小時顯示總時長，並列出轉機機場名稱；直飛行程顯示「直飛」。
+
+### 啟用網頁直接保存航線
+
+在 GitHub 建立 Fine-grained personal access token，只授權此倉庫的 **Contents: Read and write**。到 Streamlit Cloud → App settings → Secrets 加入：
+
+```toml
+GITHUB_TOKEN = "github_pat_..."
+GITHUB_REPOSITORY = "你的帳號/flight-deals"
+GITHUB_BRANCH = "main"
+```
+
+Token 只放在 Streamlit Secrets，不要寫進程式碼或提交到倉庫。若不設定 Token，仍可在頁面編輯清單並下載 `routes.yaml`，再用 GitHub 網頁上傳。
 
 ## 部署到 GitHub
 
-1. **建立倉庫並推上去**
+1. **建立倉庫並用 GitHub 網頁上傳檔案**
 
-   ```bash
-   git init
-   git add .
-   git commit -m "feat: 特價機票監控 MVP"
-   git branch -M main
-   git remote add origin https://github.com/<你的帳號>/flight-deals.git
-   git push -u origin main
-   ```
+   建立公開倉庫 `flight-deals`，不要初始化 README。進入倉庫 → Add file → Upload files，把專案內容上傳到倉庫根目錄，再按 Commit changes。
 
 2. **開啟 Actions 寫入權限**
    Settings → Actions → General → Workflow permissions → 選 **Read and write permissions**。
@@ -63,6 +58,8 @@ streamlit run app.py       # 開啟前端 http://localhost:8501
 
 3. **手動觸發一次驗證**
    Actions → `scrape-flight-deals` → Run workflow。成功後 `data/` 會出現新的 commit。
+
+   第一次執行或切換幣別後，建議手動跑一次，讓最新快照改為 EUR。
 
 ## 部署前端（Streamlit Community Cloud）
 
@@ -85,7 +82,7 @@ streamlit run app.py       # 開啟前端 http://localhost:8501
 ## 常見問題
 
 **抓不到資料 / 全部失敗？**
-Google 反爬或頁面改版。先確認 `pip install -U fast-flights`，並在 `routes.yaml` 提高 `search_delay_seconds`、減少航線數量。
+Google 反爬或頁面改版。可在 GitHub 網頁提高 `config/routes.yaml` 的 `search_delay_seconds`、減少航線數量；若套件需要更新，在 `requirements.txt` 提高 `fast-flights` 版本後 Commit。
 
 **為什麼特價都是空的？**
 首次執行沒有歷史基準，只會記錄、不判定特價。累積數次資料後才會開始標記。

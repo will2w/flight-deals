@@ -22,8 +22,10 @@ class Offer:
     to_airport: str
     departure_date: str
     price: int
+    currency: str = "EUR"
     airlines: list[str] = field(default_factory=list)
     stops: int = 0
+    transfer_airports: list[str] = field(default_factory=list)
     duration_minutes: int = 0
     departure_time: str = ""
     arrival_time: str = ""
@@ -39,7 +41,7 @@ class GoogleFlightsProvider:
 
     name = "google-flights"
 
-    def __init__(self, currency: str = "TWD", language: str = "zh-TW", seat: str = "economy"):
+    def __init__(self, currency: str = "EUR", language: str = "zh-TW", seat: str = "economy"):
         self.currency = currency
         self.language = language
         self.seat = seat
@@ -71,20 +73,26 @@ class GoogleFlightsProvider:
         for item in results:
             if item.price is None:  # Google 有時不給報價
                 continue
-            offers.append(self._to_offer(item, from_airport, to_airport, departure_date))
+            offers.append(self._to_offer(item, from_airport, to_airport, departure_date, self.currency))
         return offers
 
     @staticmethod
-    def _to_offer(item, from_airport: str, to_airport: str, departure_date: str) -> Offer:
+    def _to_offer(item, from_airport: str, to_airport: str, departure_date: str, currency: str) -> Offer:
         legs = item.flights
         first, last = legs[0], legs[-1]
+        transfer_airports = [
+            f"{leg.to_airport.code} {leg.to_airport.name}".strip()
+            for leg in legs[:-1]
+        ]
         return Offer(
             from_airport=from_airport,
             to_airport=to_airport,
             departure_date=departure_date,
             price=int(item.price),
+            currency=currency,
             airlines=list(item.airlines or []),
             stops=max(len(legs) - 1, 0),
+            transfer_airports=transfer_airports,
             duration_minutes=_total_minutes(first, last, legs),
             departure_time=_fmt_hhmm(first.departure.time),
             arrival_time=_fmt_hhmm(last.arrival.time),

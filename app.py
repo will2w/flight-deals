@@ -6,6 +6,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import time
 from datetime import date, timedelta
@@ -13,18 +14,19 @@ from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+import yaml
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from src.config import load_config  # noqa: E402
+from src.github_config import update_routes  # noqa: E402
 from src.pipeline import build_baselines, is_deal  # noqa: E402
 from src.provider import GoogleFlightsProvider  # noqa: E402
 from src.store import read_history  # noqa: E402
 
 SNAPSHOT_PATH = ROOT / "data" / "deals.json"
-HISTORY_PATH = ROOT / "data" / "history.csv"
 
 SEAT_LABELS = {
     "economy": "經濟艙",
@@ -110,7 +112,7 @@ def cached_search(
 
 def mark_deals(rows: list[dict]) -> pd.DataFrame:
     """用歷史基準標記每筆是否為特價。"""
-    baselines = build_baselines(read_history())
+    baselines = build_baselines(read_history(), currency="EUR")
     rules = load_config().deal_rules
     for row in rows:
         key = (row["from_airport"], row["to_airport"], row["departure_date"])
@@ -118,6 +120,137 @@ def mark_deals(rows: list[dict]) -> pd.DataFrame:
         row["is_deal"] = is_deal(row["price"], prices, rules)
         row["baseline_median"] = int(pd.Series(prices).median()) if prices else None
     return pd.DataFrame(rows)
+
+
+def format_duration(minutes) -> str:
+    """將分鐘格式化為小時，保留一位小數。"""
+    try:
+        return f"{float(minutes) / 60:.1f}"
+    except (TypeError, ValueError):
+        return "-"
+
+
+def format_transfers(value, stops: int | float | None = None) -> str:
+    if isinstance(value, list):
+        return "、".join(str(item) for item in value) if value else "直飛"
+    if not isinstance(value, str) or not value.strip():
+        return "未提供" if stops and stops > 0 else "直飛"
+    return "、".join(part for part in value.split("|") if part)
+
+
+def read_secret(name: str, default: str = "") -> str:
+    try:
+        value = st.secrets.get(name, default)
+    except Exception:
+        value = os.environ.get(name, default)
+    return str(value or default).strip()
+
+
+def route_manager() -> None:
+    """編輯監控航線，並透過 GitHub API 將設定保存至倉庫。"""
+    config = load_config()
+    if "watch_routes" not in st.session_state:
+        st.session_state["watch_routes"] = [
+            {"from": route.from_airport, "to": route.to_airport}
+            for route in config.routes
+        ]
+
+    routes = st.session_state["watch_routes"]
+    st.subheader("監控航線設定")
+    st.caption("新增或移除航線後，可保存回 GitHub；Actions 下一次排程就會監控新航線。若尚未設定 Token，可下載設定檔再到 GitHub 網頁更新。")
+
+    with st.form("add_monitored_route"):
+        left, right = st.columns(2)
+        origin = left.selectbox("出發地", list(AIRPORTS), format_func=airport_label, key="watch_origin")
+        destination = right.selectbox(
+            "目的地",
+            list(AIRPORTS),
+            index=list(AIRPORTS).index("NRT"),
+            format_func=airport_label,
+            key="watch_destination",
+        )
+        add_route = st.form_submit_button("＋ 新增航線", use_container_width=True)
+
+    if add_route:
+        if origin == destination:
+            st.warning("出發地與目的地不能相同。")
+        elif any(r["from"] == origin and r["to"] == destination for r in routes):
+            st.info("這條航線已在監控清單中。")
+        else:
+            routes.append({"from": origin, "to": destination})
+            st.session_state["watch_routes"] = routes
+            st.rerun()
+
+    labels = [f"{route['from']} → {route['to']}" for route in routes]
+    if labels:
+        st.dataframe(
+            pd.DataFrame(
+                [
+                    {
+                        "出發地": airport_label(route["from"]),
+                        "目的地": airport_label(route["to"]),
+                    }
+                    for route in routes
+                ]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+        remove_label = st.selectbox("移除一條航線", ["不移除"] + labels, key="remove_route")
+        if st.button("移除所選航線", disabled=remove_label == "不移除"):
+            index = labels.index(remove_label)
+            routes.pop(index)
+            st.session_state["watch_routes"] = routes
+            st.rerun()
+    else:
+        st.info("清單目前沒有航線，請先新增至少一條。")
+
+    config_data = yaml.safe_load((ROOT / "config" / "routes.yaml").read_text(encoding="utf-8")) or {}
+    config_data["settings"] = config_data.get("settings", {})
+    config_data["settings"]["currency"] = "EUR"
+    config_data["routes"] = routes
+    yaml_content = yaml.safe_dump(
+        config_data, allow_unicode=True, sort_keys=False, default_flow_style=False
+    )
+
+    token = read_secret("GITHUB_TOKEN")
+    repository = read_secret("GITHUB_REPOSITORY")
+    branch = read_secret("GITHUB_BRANCH", "main")
+    col_save, col_download = st.columns(2)
+    if col_save.button("保存並更新排程", type="primary", use_container_width=True):
+        if not token or not repository:
+            st.error("尚未設定 GitHub 權限。請在 Streamlit Cloud 的 App settings → Secrets 設定 GITHUB_TOKEN、GITHUB_REPOSITORY。")
+        elif not routes:
+            st.error("至少保留一條監控航線。")
+        else:
+            try:
+                commit_url = update_routes(repository, branch, token, routes)
+                st.success("航線已保存到 GitHub。GitHub Actions 將依排程監控這些航線。")
+                if commit_url:
+                    st.link_button("查看 GitHub 設定提交", commit_url)
+            except Exception as exc:
+                st.error(f"保存失敗：{exc}")
+
+    col_download.download_button(
+        "下載 routes.yaml（手動更新用）",
+        data=yaml_content.encode("utf-8"),
+        file_name="routes.yaml",
+        mime="text/yaml",
+        use_container_width=True,
+    )
+    with st.expander("如何啟用網頁內直接保存？"):
+        st.markdown(
+            "在 GitHub 建立一個 **Fine-grained personal access token**，只授權此倉庫的 "
+            "**Contents: Read and write**。接著到 Streamlit Cloud → App settings → Secrets "
+            "加入以下設定（將範例值換成你的資料）："
+        )
+        st.code(
+            'GITHUB_TOKEN = "github_pat_..."\n'
+            'GITHUB_REPOSITORY = "你的帳號/flight-deals"\n'
+            'GITHUB_BRANCH = "main"',
+            language="toml",
+        )
+        st.caption("Token 只放在 Streamlit Secrets，不要貼到程式碼或公開倉庫。也可以下載 routes.yaml，再到 GitHub 網頁手動更新。")
 
 
 def render_results(df: pd.DataFrame, currency: str) -> None:
@@ -129,19 +262,28 @@ def render_results(df: pd.DataFrame, currency: str) -> None:
     direct = df[df["stops"] == 0]
     col1, col2, col3 = st.columns(3)
     col1.metric(f"最低票價 ({currency})", f"{int(cheapest['price']):,}")
-    col2.metric("直飛最低價", f"{int(direct['price'].min()):,}" if not direct.empty else "無直飛")
+    col2.metric(f"直飛最低價 ({currency})", f"{int(direct['price'].min()):,}" if not direct.empty else "無直飛")
     col3.metric("符合特價", int(df["is_deal"].sum()))
 
     view = df.sort_values(["price"]).copy()
     view["航空公司"] = view["airlines"].apply(lambda v: "、".join(v) if isinstance(v, list) else "")
+    view["轉機地點"] = [
+        format_transfers(value, stops)
+        for value, stops in zip(
+            view.get("transfer_airports", pd.Series(index=view.index, dtype=object)),
+            view["stops"],
+        )
+    ]
+    view["總時長(小時)"] = view["duration_minutes"].apply(format_duration)
     view["特價"] = view["is_deal"].map({True: "是", False: ""})
     columns = {
         "departure_date": "出發日",
         "price": f"票價 ({currency})",
-        "baseline_median": "歷史中位數",
+        "baseline_median": f"歷史中位數 ({currency})",
         "航空公司": "航空公司",
         "stops": "轉機",
-        "duration_minutes": "總時長(分)",
+        "轉機地點": "轉機地點",
+        "總時長(小時)": "總時長(小時)",
         "departure_time": "起飛",
         "arrival_time": "抵達",
         "特價": "特價",
@@ -244,13 +386,18 @@ def search_tab() -> None:
 
 
 def watchlist_tab() -> None:
+    route_manager()
+    st.divider()
+
     snapshot = load_snapshot()
     if snapshot is None:
-        st.info("尚未產生資料。等 GitHub Actions 排程跑過一次，或在本機執行 `python -m src.pipeline`。")
+        st.info("尚未產生票價資料。航線已可先設定；GitHub Actions 跑過後就會出現在清單。")
         return
 
     if snapshot.get("is_sample"):
         st.warning("目前顯示的是示範資料（非真實票價）。")
+    if snapshot.get("currency", "TWD") != "EUR":
+        st.warning("這是切換歐元前的舊快照，仍以原幣別顯示。到 GitHub → Actions 手動執行一次，便會更新成 EUR。")
 
     summary = snapshot.get("summary", {})
     col1, col2, col3, col4 = st.columns(4)
@@ -269,11 +416,19 @@ def watchlist_tab() -> None:
         with st.expander(f"查詢失敗 {len(failures)} 筆"):
             st.dataframe(pd.DataFrame(failures), use_container_width=True)
 
-    currency = snapshot.get("currency", "TWD")
+    currency = snapshot.get("currency", "EUR")
     offers_df["航線"] = offers_df["from_airport"] + " → " + offers_df["to_airport"]
     offers_df["航空公司"] = offers_df["airlines"].apply(
         lambda v: "、".join(v) if isinstance(v, list) else (v or "")
     )
+    offers_df["轉機地點"] = [
+        format_transfers(value, stops)
+        for value, stops in zip(
+            offers_df.get("transfer_airports", pd.Series(index=offers_df.index, dtype=object)),
+            offers_df["stops"],
+        )
+    ]
+    offers_df["總時長(小時)"] = offers_df["duration_minutes"].apply(format_duration)
 
     routes = sorted(offers_df["航線"].unique())
     stops_upper = max(int(offers_df["stops"].max()), 1)
@@ -295,10 +450,11 @@ def watchlist_tab() -> None:
         "航線": "航線",
         "departure_date": "出發日",
         "price": f"票價 ({currency})",
-        "baseline_median": "歷史中位數",
+        "baseline_median": f"歷史中位數 ({currency})",
         "航空公司": "航空公司",
         "stops": "轉機",
-        "duration_minutes": "總時長(分)",
+        "轉機地點": "轉機地點",
+        "總時長(小時)": "總時長(小時)",
         "departure_time": "起飛",
         "arrival_time": "抵達",
         "is_deal": "特價",
@@ -324,6 +480,13 @@ def trend_tab() -> None:
     if history.empty:
         st.info("尚無歷史資料。累積數次抓取後即可看到走勢。")
         return
+    if "currency" not in history.columns:
+        st.info("歷史資料仍是舊格式；下一次 GitHub Actions 更新後會開始記錄 EUR 價格走勢。")
+        return
+    history = history[history["currency"].astype(str).str.upper() == "EUR"].copy()
+    if history.empty:
+        st.info("尚無 EUR 歷史資料。下一次 GitHub Actions 更新後會開始記錄。")
+        return
 
     history["航線"] = history["from_airport"] + " → " + history["to_airport"]
     history["price"] = pd.to_numeric(history["price"], errors="coerce")
@@ -340,10 +503,8 @@ def trend_tab() -> None:
         st.write("此組合尚無歷史資料。")
         return
 
-    snapshot = load_snapshot()
-    currency = snapshot.get("currency", "TWD") if snapshot else "TWD"
     lowest = series.groupby("observed_at")["price"].min().sort_index()
-    st.line_chart(lowest, y_label=f"最低票價 ({currency})")
+    st.line_chart(lowest, y_label="最低票價 (EUR)")
 
 
 def main() -> None:

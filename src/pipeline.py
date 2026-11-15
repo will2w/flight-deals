@@ -23,10 +23,14 @@ MIN_SAMPLES_FOR_MEDIAN = 3
 BaselineKey = tuple[str, str, str]  # (出發地, 目的地, 出發日)
 
 
-def build_baselines(history: list[dict[str, str]]) -> dict[BaselineKey, list[int]]:
-    """把歷史 CSV 依 (出發地, 目的地, 出發日) 分組，收集價格清單。"""
+def build_baselines(
+    history: list[dict[str, str]], currency: str = "EUR"
+) -> dict[BaselineKey, list[int]]:
+    """依航線、出發日與幣別分組，避免不同貨幣的歷史價格混算。"""
     buckets: dict[BaselineKey, list[int]] = defaultdict(list)
     for row in history:
+        if row.get("currency", "").upper() != currency.upper():
+            continue
         try:
             price = int(float(row["price"]))
         except (KeyError, TypeError, ValueError):
@@ -97,7 +101,7 @@ def collect_offers(config: AppConfig, baselines: dict[BaselineKey, list[int]]) -
 
 def run(config: AppConfig | None = None) -> dict[str, Any]:
     config = config or load_config()
-    baselines = build_baselines(read_history())
+    baselines = build_baselines(read_history(), currency=config.settings.currency)
     offers, failures = collect_offers(config, baselines)
     deals = [offer for offer in offers if offer["is_deal"]]
     observed_at = now_iso()
@@ -123,7 +127,7 @@ def run(config: AppConfig | None = None) -> dict[str, Any]:
     }
 
     path = write_snapshot(payload)
-    append_history(offers, observed_at)
+    append_history(offers, observed_at, currency=config.settings.currency)
 
     log.info("完成：%d 筆行程、%d 筆特價，寫入 %s", len(offers), len(deals), path)
     if deals:

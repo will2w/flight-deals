@@ -1,6 +1,6 @@
-# 監控設定（無需任何 API Key）
+# 監控設定（票價來源無需 API Key）
 settings:
-  currency: TWD            # 幣別
+  currency: EUR            # 幣別
   language: zh-TW          # 語言
   seat: economy            # economy / premium-economy / business / first
   top_n: 5                 # 每條航線每個出發日，保留最便宜的幾個行程
