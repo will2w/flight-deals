@@ -15,6 +15,9 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 import yaml
+import airportsdata
+
+st.set_page_config(page_title="特價機票監控", layout="wide")
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
@@ -74,8 +77,21 @@ AIRPORTS: dict[str, str] = {
     "ORD": "芝加哥", "BOS": "波士頓", "DFW": "達拉斯", "YVR": "溫哥華", "YYZ": "多倫多",
 }
 
-st.set_page_config(page_title="特價機票監控", layout="wide")
+# 使用完整 IATA 機場清單補足常用清單；既有繁體中文名稱優先保留。
+@st.cache_data
+def load_iata_airports() -> dict:
+    return airportsdata.load("IATA")
 
+
+for airport_code, airport in load_iata_airports().items():
+    if len(airport_code) != 3:
+        continue
+    airport_name = " · ".join(
+        str(airport.get(field, "")).strip()
+        for field in ("city", "name", "country")
+        if airport.get(field)
+    )
+    AIRPORTS.setdefault(airport_code, airport_name or airport_code)
 
 def airport_label(code: str) -> str:
     return f"{code} {AIRPORTS.get(code, '')}".strip()
@@ -97,17 +113,18 @@ def load_history() -> pd.DataFrame:
 
 @st.cache_data(ttl=1800, show_spinner=False)
 def cached_search(
-    origin: str,
-    destination: str,
-    departure_date: str,
+    segments: tuple[tuple[str, str, str], ...],
+    trip_type: str,
     seat: str,
     currency: str,
     language: str,
     max_stops: int | None,
 ) -> list[dict]:
-    """即時查 Google Flights。參數必須可雜湊，同條件 30 分鐘內走快取。"""
+    """即時查多航段行程；同條件 30 分鐘內走快取。"""
     provider = GoogleFlightsProvider(currency=currency, language=language, seat=seat)
-    offers = provider.search(origin, destination, departure_date, max_stops=max_stops)
+    offers = provider.search_itinerary(
+        list(segments), trip_type=trip_type, max_stops=max_stops
+    )
     return [offer.to_dict() for offer in offers]
 
 
@@ -117,7 +134,11 @@ def mark_deals(rows: list[dict]) -> pd.DataFrame:
     rules = load_config().deal_rules
     for row in rows:
         key = (row["from_airport"], row["to_airport"], row["departure_date"])
-        prices = baselines.get(key, [])
+        prices = (
+            baselines.get(key, [])
+            if row.get("trip_type", "one-way") == "one-way"
+            else []
+        )
         row["is_deal"] = is_deal(row["price"], prices, rules)
         row["baseline_median"] = int(pd.Series(prices).median()) if prices else None
     return pd.DataFrame(rows)
@@ -133,7 +154,9 @@ def format_duration(minutes) -> str:
 
 def format_transfers(value, stops: int | float | None = None) -> str:
     if isinstance(value, list):
-        return "、".join(str(item) for item in value) if value else "直飛"
+        if value:
+            return "、".join(str(item) for item in value)
+        return "未提供" if stops and stops > 0 else "直飛"
     if not isinstance(value, str) or not value.strip():
         return "未提供" if stops and stops > 0 else "直飛"
     return "、".join(part for part in value.split("|") if part)
@@ -268,25 +291,39 @@ def render_results(df: pd.DataFrame, currency: str) -> None:
 
     view = df.sort_values(["price"]).copy()
     view["航空公司"] = view["airlines"].apply(lambda v: "、".join(v) if isinstance(v, list) else "")
-    view["轉機地點"] = [
-        format_transfers(value, stops)
-        for value, stops in zip(
-            view.get("transfer_airports", pd.Series(index=view.index, dtype=object)),
-            view["stops"],
+    view["行程"] = view["segments"].apply(
+        lambda segments: " / ".join(
+            f"{airport_label(segment['from_airport'])} → {airport_label(segment['to_airport'])}"
+            for segment in segments
         )
-    ]
-    view["總時長(小時)"] = view["duration_minutes"].apply(format_duration)
+    )
+    view["去程時段"] = view["segments"].apply(
+        lambda segments: _segment_times(segments, 0)
+    )
+    view["回程時段"] = view["segments"].apply(
+        lambda segments: _segment_times(segments, 1)
+    )
+    view["去程時長(小時)"] = view["segments"].apply(
+        lambda segments: _segment_duration(segments, 0)
+    )
+    view["回程時長(小時)"] = view["segments"].apply(
+        lambda segments: _segment_duration(segments, 1)
+    )
+    view["轉機地點"] = view["segments"].apply(_format_itinerary_transfers)
     view["特價"] = view["is_deal"].map({True: "是", False: ""})
     columns = {
-        "departure_date": "出發日",
+        "行程": "行程",
+        "departure_date": "去程日",
+        "return_date": "回程日",
         "price": f"票價 ({currency})",
         "baseline_median": f"歷史中位數 ({currency})",
         "航空公司": "航空公司",
         "stops": "轉機",
         "轉機地點": "轉機地點",
-        "總時長(小時)": "總時長(小時)",
-        "departure_time": "起飛",
-        "arrival_time": "抵達",
+        "去程時段": "去程時段",
+        "去程時長(小時)": "去程時長(小時)",
+        "回程時段": "回程時段",
+        "回程時長(小時)": "回程時長(小時)",
         "特價": "特價",
     }
     st.dataframe(
@@ -304,18 +341,47 @@ def render_results(df: pd.DataFrame, currency: str) -> None:
     )
 
 
-def run_search(config, origin: str, destination: str, dates: list[date], seat: str, max_stops) -> tuple[list[dict], list[str]]:
-    """逐日查詢，單日失敗不中斷整批。"""
+def _segment_times(segments: list[dict], index: int) -> str:
+    if len(segments) <= index:
+        return "—"
+    segment = segments[index]
+    return f"{segment['departure_time']}–{segment['arrival_time']}"
+
+
+def _segment_duration(segments: list[dict], index: int) -> str:
+    if len(segments) <= index:
+        return "—"
+    return format_duration(segments[index].get("duration_minutes"))
+
+
+def _format_itinerary_transfers(segments: list[dict]) -> str:
+    labels = ["去程", "回程", "第 3 段", "第 4 段"]
+    parts = []
+    for index, segment in enumerate(segments):
+        airports = segment.get("transfer_airports", [])
+        text = format_transfers(airports, segment.get("stops", 0))
+        if text != "直飛":
+            label = labels[index] if index < len(labels) else f"第 {index + 1} 段"
+            parts.append(f"{label}：{text}")
+    return "；".join(parts) if parts else "直飛"
+
+
+def run_search(
+    config,
+    requests: list[tuple[tuple[tuple[str, str, str], ...], str]],
+    seat: str,
+    max_stops: int | None,
+) -> tuple[list[dict], list[str]]:
+    """逐個日期組合查詢，單一組合失敗不中斷整批。"""
     rows: list[dict] = []
     errors: list[str] = []
     progress = st.progress(0.0, text="查詢中…")
-    for index, day in enumerate(dates):
+    for index, (segments, trip_type) in enumerate(requests):
         try:
             rows.extend(
                 cached_search(
-                    origin,
-                    destination,
-                    day.isoformat(),
+                    segments,
+                    trip_type,
                     seat,
                     config.settings.currency,
                     config.settings.language,
@@ -323,9 +389,10 @@ def run_search(config, origin: str, destination: str, dates: list[date], seat: s
                 )
             )
         except Exception as exc:
-            errors.append(f"{day.isoformat()}：{exc}")
-        progress.progress((index + 1) / len(dates), text=f"查詢中… {day.isoformat()}")
-        if index < len(dates) - 1:
+            route = " / ".join(f"{origin}→{destination}" for origin, destination, _ in segments)
+            errors.append(f"{route}：{exc}")
+        progress.progress((index + 1) / len(requests), text=f"查詢中… {index + 1}/{len(requests)}")
+        if index < len(requests) - 1:
             time.sleep(config.settings.search_delay_seconds)
     progress.empty()
     return rows, errors
@@ -338,28 +405,106 @@ def search_tab() -> None:
     default_dest = codes.index("NRT") if "NRT" in codes else 1
 
     with st.form("search_form"):
+        trip_label = st.radio(
+            "行程類型",
+            ["單程", "往返", "開口行程"],
+            horizontal=True,
+        )
         col1, col2 = st.columns(2)
         origin = col1.selectbox("出發地", codes, index=default_origin, format_func=airport_label)
         destination = col2.selectbox("目的地", codes, index=default_dest, format_func=airport_label)
 
-        col3, col4, col5, col6 = st.columns(4)
-        departure = col3.date_input("出發日", value=date.today() + timedelta(days=30), min_value=date.today())
-        flexible = col4.number_input("彈性日期 ±(天)", min_value=0, max_value=7, value=0, step=1)
+        col3, col4 = st.columns(2)
+        departure = col3.date_input(
+            "去程日期", value=date.today() + timedelta(days=30), min_value=date.today()
+        )
+        flexible = col4.number_input(
+            "去程彈性日期 ±(天)", min_value=0, max_value=7, value=0, step=1
+        )
+
+        return_date = None
+        return_origin = destination
+        return_destination = origin
+        open_jaw_type = ""
+        if trip_label == "往返":
+            return_date = st.date_input(
+                "回程日期", value=departure + timedelta(days=7), min_value=departure
+            )
+            st.caption(f"往返：{airport_label(destination)} → {airport_label(origin)}")
+        elif trip_label == "開口行程":
+            return_date = st.date_input(
+                "回程日期", value=departure + timedelta(days=7), min_value=departure
+            )
+            open_jaw_type = st.radio(
+                "開口方向",
+                ["目的地開口（A→B，C→A）", "出發地開口（A→B，B→C）"],
+                horizontal=True,
+            )
+            other_codes = [code for code in codes if code not in {origin, destination}]
+            default_other_code = "TPE" if "TPE" in other_codes else other_codes[0]
+            if open_jaw_type.startswith("目的地"):
+                return_origin = st.selectbox(
+                    "回程出發城市",
+                    codes,
+                    index=codes.index(default_other_code),
+                    format_func=airport_label,
+                )
+                return_destination = origin
+            else:
+                return_origin = destination
+                return_destination = st.selectbox(
+                    "回程抵達城市",
+                    codes,
+                    index=codes.index(default_other_code),
+                    format_func=airport_label,
+                )
+
+        col5, col6 = st.columns(2)
         seat = col5.selectbox("艙等", list(SEAT_LABELS), format_func=lambda s: SEAT_LABELS[s])
-        stops_label = col6.radio("轉機", list(STOP_CHOICES), horizontal=False)
+        stops_label = col6.radio("轉機", list(STOP_CHOICES), horizontal=True)
 
         submitted = st.form_submit_button("搜尋", type="primary", use_container_width=True)
+
+    st.caption("往返與開口行程顯示整趟總價；歷史特價判定目前只套用於單程。")
 
     if submitted:
         if origin == destination:
             st.warning("出發地與目的地不能相同。")
+        elif trip_label != "單程" and return_date <= departure + timedelta(days=flexible):
+            st.warning("回程日期必須晚於所有可能的去程日期，請調整日期或縮小彈性範圍。")
+        elif trip_label == "開口行程" and return_origin == return_destination:
+            st.warning("開口行程的回程出發地與目的地不能相同。")
+        elif (
+            trip_label == "開口行程"
+            and open_jaw_type.startswith("目的地")
+            and return_origin == destination
+        ):
+            st.warning("目的地開口的回程出發城市要與去程目的地不同。")
+        elif (
+            trip_label == "開口行程"
+            and open_jaw_type.startswith("出發地")
+            and return_destination == origin
+        ):
+            st.warning("出發地開口的回程抵達城市要與去程出發地不同。")
         else:
             dates = [departure + timedelta(days=offset) for offset in range(-flexible, flexible + 1)]
-            rows, errors = run_search(config, origin, destination, dates, seat, STOP_CHOICES[stops_label])
+            trip_type = {"單程": "one-way", "往返": "round-trip", "開口行程": "multi-city"}[trip_label]
+            requests = []
+            for outbound_date in dates:
+                segments = [(origin, destination, outbound_date.isoformat())]
+                if trip_label != "單程":
+                    segments.append(
+                        (return_origin, return_destination, return_date.isoformat())
+                    )
+                requests.append((tuple(segments), trip_type))
+
+            rows, errors = run_search(
+                config, requests, seat, STOP_CHOICES[stops_label]
+            )
             # 存進 session_state，避免側欄或下載按鈕觸發 rerun 後結果消失
             st.session_state["search_result"] = {
-                "origin": origin,
-                "destination": destination,
+                "trip_label": trip_label,
+                "segments": requests[0][0],
                 "rows": rows,
                 "errors": errors,
                 "dates": [d.isoformat() for d in dates],
@@ -382,7 +527,11 @@ def search_tab() -> None:
         daily = df.groupby("departure_date")["price"].min().sort_index()
         st.bar_chart(daily, y_label=f"最低票價 ({config.settings.currency})")
 
-    st.subheader(f"{airport_label(result['origin'])} → {airport_label(result['destination'])}")
+    route_title = " / ".join(
+        f"{airport_label(origin)} → {airport_label(destination)}"
+        for origin, destination, _ in result["segments"]
+    )
+    st.subheader(f"{result['trip_label']}：{route_title}")
     render_results(df, config.settings.currency)
 
 

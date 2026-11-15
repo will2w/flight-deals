@@ -10,10 +10,11 @@
 - 以 Streamlit 網頁呈現：最新票價、特價清單、價格走勢。
 - 在 Streamlit 監控清單新增／移除航線，並回寫 GitHub 設定。
 - 全站票價使用 EUR；行程時長以小時顯示，列出轉機機場。
+- 即時搜尋支援單程、往返與兩種開口行程，機場選單載入完整 IATA 清單。
 - 全部跑在 GitHub 上：Actions 負責排程抓取，Git 倉庫當資料庫，Streamlit Cloud 負責前端。
 
 **非目標（第一版不做）**
-- 多城市／來回複雜行程、轉機組合最佳化。
+- 三段以上的自訂多城市行程、轉機組合最佳化。
 - 自動下單、自動付款。
 - 使用者帳號系統。
 
@@ -116,7 +117,7 @@ SingleFlight:
 | `config/routes.yaml` | 監控航線、幣別、出發日偏移、特價規則 | 純設定 |
 | `src/config.py` | 讀設定、展開出發日清單 | `load_config() -> AppConfig` |
 | `src/github_config.py` | 使用 Streamlit Secret 的 Fine-grained Token 回寫 `routes.yaml` | `update_routes(...)` |
-| `src/provider.py` | 資料來源；把第三方結構正規化成 `Offer` | `Provider.search(from, to, date) -> list[Offer]` |
+| `src/provider.py` | 資料來源；把單程、往返及多航段結果正規化成 `Offer` | `search_itinerary(segments, trip_type) -> list[Offer]` |
 | `src/store.py` | 快照 JSON 與歷史 CSV 讀寫 | `write_snapshot / append_history / load_history` |
 | `src/pipeline.py` | 主流程、特價判定、輸出 | `python -m src.pipeline` |
 | `app.py` | Streamlit 前端 | Streamlit Cloud 執行 |
@@ -144,6 +145,8 @@ SingleFlight:
     {
       "from_airport": "TPE", "to_airport": "NRT", "departure_date": "2026-12-01",
       "price": 299, "currency": "EUR", "airlines": ["BR"], "stops": 0,
+      "trip_type": "one-way", "return_date": null,
+      "segments": [{"from_airport": "TPE", "to_airport": "NRT"}],
       "transfer_airports": [], "duration_minutes": 185,
       "departure_time": "08:40", "arrival_time": "12:45",
       "is_best": true, "is_deal": true,
@@ -217,6 +220,6 @@ is_deal(price) =
 
 1. **通知**：`is_deal` 為真時，推到 GitHub Issue／Email／飛書 Webhook（新增 `src/notify.py`）。
 2. **更多 provider**：Kiwi GraphQL、Skyscanner RapidAPI（有 Key 時）。
-3. **來回／多城市**：`fast-flights` 已支援 `round-trip`（需兩段 `FlightQuery`）。
+3. **多段開口行程**：目前支援兩段式開口；之後可擴充成三段以上自訂城市順序。
 4. **更聰明的基準**：改用「同航線 ±N 天」的價格分布，或以「出發前天數」建模。
 5. **前端強化**：價格日曆熱力圖、訂閱條件後寄信通知。
