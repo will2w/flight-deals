@@ -44,7 +44,13 @@ class GoogleFlightsProvider:
         self.language = language
         self.seat = seat
 
-    def search(self, from_airport: str, to_airport: str, departure_date: str) -> list[Offer]:
+    def search(
+        self,
+        from_airport: str,
+        to_airport: str,
+        departure_date: str,
+        max_stops: int | None = None,
+    ) -> list[Offer]:
         query = create_query(
             flights=[
                 FlightQuery(
@@ -58,6 +64,7 @@ class GoogleFlightsProvider:
             passengers=Passengers(adults=1),
             language=self.language,
             currency=self.currency,
+            max_stops=max_stops,
         )
         results = get_flights(query)
         offers: list[Offer] = []

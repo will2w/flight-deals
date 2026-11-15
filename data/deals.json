@@ -1,404 +1,145 @@
 {
-  "generated_at": "2026-11-15T21:01:56+00:00",
-  "is_sample": false,
+  "generated_at": "2026-11-16T02:00:00+00:00",
+  "is_sample": true,
   "currency": "TWD",
   "routes": [
-    {
-      "from": "TPE",
-      "to": "NRT"
-    },
-    {
-      "from": "TPE",
-      "to": "BKK"
-    },
-    {
-      "from": "TPE",
-      "to": "SGN"
-    }
+    { "from": "TPE", "to": "NRT" },
+    { "from": "TPE", "to": "BKK" },
+    { "from": "TPE", "to": "SGN" }
   ],
   "rules": {
-    "below_median_pct": 30.0,
+    "below_median_pct": 30,
     "below_historical_min": true
   },
   "summary": {
     "routes_checked": 3,
     "queries": 9,
-    "offers": 20,
-    "deals": 0,
-    "failures": [
-      {
-        "from": "TPE",
-        "to": "NRT",
-        "departure_date": "2026-12-15",
-        "error": "list index out of range"
-      },
-      {
-        "from": "TPE",
-        "to": "NRT",
-        "departure_date": "2027-01-14",
-        "error": "no flights found; received error"
-      },
-      {
-        "from": "TPE",
-        "to": "BKK",
-        "departure_date": "2026-12-15",
-        "error": "no flights found; received error"
-      },
-      {
-        "from": "TPE",
-        "to": "SGN",
-        "departure_date": "2026-12-15",
-        "error": "no flights found; received error"
-      },
-      {
-        "from": "TPE",
-        "to": "SGN",
-        "departure_date": "2027-01-14",
-        "error": "no flights found; received error"
-      }
-    ]
+    "offers": 8,
+    "deals": 2,
+    "failures": []
   },
   "offers": [
     {
       "from_airport": "TPE",
       "to_airport": "NRT",
-      "departure_date": "2026-11-29",
-      "price": 6779,
-      "airlines": [
-        "泰赫航空"
-      ],
-      "stops": 1,
-      "duration_minutes": 685,
-      "departure_time": "01:55",
-      "arrival_time": "13:20",
-      "is_best": false,
-      "provider": "google-flights",
-      "is_deal": false,
-      "baseline_median": null
-    },
-    {
-      "from_airport": "TPE",
-      "to_airport": "NRT",
-      "departure_date": "2026-11-29",
-      "price": 8915,
-      "airlines": [
-        "酷航"
-      ],
-      "stops": 0,
-      "duration_minutes": 245,
-      "departure_time": "14:25",
-      "arrival_time": "18:30",
-      "is_best": false,
-      "provider": "google-flights",
-      "is_deal": false,
-      "baseline_median": null
-    },
-    {
-      "from_airport": "TPE",
-      "to_airport": "NRT",
-      "departure_date": "2026-11-29",
-      "price": 9363,
-      "airlines": [
-        "捷星日本航空"
-      ],
-      "stops": 0,
-      "duration_minutes": 245,
-      "departure_time": "02:30",
-      "arrival_time": "06:35",
-      "is_best": false,
-      "provider": "google-flights",
-      "is_deal": false,
-      "baseline_median": null
-    },
-    {
-      "from_airport": "TPE",
-      "to_airport": "NRT",
-      "departure_date": "2026-11-29",
-      "price": 9499,
-      "airlines": [
-        "台灣虎航"
-      ],
-      "stops": 0,
-      "duration_minutes": 240,
-      "departure_time": "15:35",
-      "arrival_time": "19:35",
-      "is_best": false,
-      "provider": "google-flights",
-      "is_deal": false,
-      "baseline_median": null
-    },
-    {
-      "from_airport": "TPE",
-      "to_airport": "NRT",
-      "departure_date": "2026-11-29",
-      "price": 9730,
-      "airlines": [
-        "樂桃航空"
-      ],
-      "stops": 0,
-      "duration_minutes": 255,
-      "departure_time": "10:40",
-      "arrival_time": "14:55",
-      "is_best": false,
-      "provider": "google-flights",
-      "is_deal": false,
-      "baseline_median": null
-    },
-    {
-      "from_airport": "TPE",
-      "to_airport": "BKK",
-      "departure_date": "2026-11-29",
-      "price": 5932,
-      "airlines": [
-        "中國南方航空"
-      ],
-      "stops": 1,
-      "duration_minutes": 1290,
-      "departure_time": "13:40",
-      "arrival_time": "11:10",
-      "is_best": false,
-      "provider": "google-flights",
-      "is_deal": false,
-      "baseline_median": null
-    },
-    {
-      "from_airport": "TPE",
-      "to_airport": "BKK",
-      "departure_date": "2026-11-29",
-      "price": 7049,
-      "airlines": [
-        "國泰航空"
-      ],
-      "stops": 1,
-      "duration_minutes": 345,
-      "departure_time": "08:20",
-      "arrival_time": "14:05",
-      "is_best": false,
-      "provider": "google-flights",
-      "is_deal": false,
-      "baseline_median": null
-    },
-    {
-      "from_airport": "TPE",
-      "to_airport": "BKK",
-      "departure_date": "2026-11-29",
-      "price": 9145,
-      "airlines": [
-        "中華航空"
-      ],
+      "departure_date": "2026-12-01",
+      "price": 5988,
+      "airlines": ["BR"],
       "stops": 0,
       "duration_minutes": 185,
-      "departure_time": "22:30",
-      "arrival_time": "01:35",
-      "is_best": false,
-      "provider": "google-flights",
-      "is_deal": false,
-      "baseline_median": null
+      "departure_time": "08:40",
+      "arrival_time": "12:45",
+      "is_best": true,
+      "is_deal": true,
+      "baseline_median": 9650,
+      "provider": "google-flights"
     },
     {
       "from_airport": "TPE",
-      "to_airport": "BKK",
-      "departure_date": "2026-11-29",
-      "price": 9319,
-      "airlines": [
-        "國泰航空"
-      ],
+      "to_airport": "NRT",
+      "departure_date": "2026-12-01",
+      "price": 6300,
+      "airlines": ["JX"],
+      "stops": 0,
+      "duration_minutes": 190,
+      "departure_time": "10:05",
+      "arrival_time": "14:15",
+      "is_best": false,
+      "is_deal": true,
+      "baseline_median": 9650,
+      "provider": "google-flights"
+    },
+    {
+      "from_airport": "TPE",
+      "to_airport": "NRT",
+      "departure_date": "2026-12-01",
+      "price": 9600,
+      "airlines": ["CI"],
       "stops": 1,
-      "duration_minutes": 355,
-      "departure_time": "10:45",
-      "arrival_time": "16:40",
+      "duration_minutes": 420,
+      "departure_time": "06:00",
+      "arrival_time": "14:00",
       "is_best": false,
-      "provider": "google-flights",
       "is_deal": false,
-      "baseline_median": null
+      "baseline_median": 9650,
+      "provider": "google-flights"
     },
     {
       "from_airport": "TPE",
       "to_airport": "BKK",
-      "departure_date": "2026-11-29",
-      "price": 10443,
-      "airlines": [
-        "THAI"
-      ],
+      "departure_date": "2026-12-17",
+      "price": 8600,
+      "airlines": ["BR"],
       "stops": 0,
-      "duration_minutes": 175,
-      "departure_time": "07:55",
-      "arrival_time": "10:50",
-      "is_best": false,
-      "provider": "google-flights",
-      "is_deal": false,
-      "baseline_median": null
-    },
-    {
-      "from_airport": "TPE",
-      "to_airport": "BKK",
-      "departure_date": "2027-01-14",
-      "price": 5662,
-      "airlines": [
-        "中國南方航空"
-      ],
-      "stops": 1,
-      "duration_minutes": 1290,
-      "departure_time": "13:40",
-      "arrival_time": "11:10",
-      "is_best": false,
-      "provider": "google-flights",
-      "is_deal": false,
-      "baseline_median": null
-    },
-    {
-      "from_airport": "TPE",
-      "to_airport": "BKK",
-      "departure_date": "2027-01-14",
-      "price": 6415,
-      "airlines": [
-        "長榮航空"
-      ],
-      "stops": 0,
-      "duration_minutes": 175,
-      "departure_time": "20:45",
-      "arrival_time": "23:40",
-      "is_best": false,
-      "provider": "google-flights",
-      "is_deal": false,
-      "baseline_median": null
-    },
-    {
-      "from_airport": "TPE",
-      "to_airport": "BKK",
-      "departure_date": "2027-01-14",
-      "price": 6999,
-      "airlines": [
-        "THAI"
-      ],
-      "stops": 0,
-      "duration_minutes": 175,
-      "departure_time": "18:50",
-      "arrival_time": "21:45",
-      "is_best": false,
-      "provider": "google-flights",
-      "is_deal": false,
-      "baseline_median": null
-    },
-    {
-      "from_airport": "TPE",
-      "to_airport": "BKK",
-      "departure_date": "2027-01-14",
-      "price": 7567,
-      "airlines": [
-        "長榮航空"
-      ],
-      "stops": 0,
-      "duration_minutes": 185,
-      "departure_time": "08:25",
-      "arrival_time": "11:30",
-      "is_best": false,
-      "provider": "google-flights",
-      "is_deal": false,
-      "baseline_median": null
-    },
-    {
-      "from_airport": "TPE",
-      "to_airport": "BKK",
-      "departure_date": "2027-01-14",
-      "price": 7567,
-      "airlines": [
-        "長榮航空"
-      ],
-      "stops": 0,
-      "duration_minutes": 185,
-      "departure_time": "09:45",
-      "arrival_time": "12:50",
-      "is_best": false,
-      "provider": "google-flights",
-      "is_deal": false,
-      "baseline_median": null
-    },
-    {
-      "from_airport": "TPE",
-      "to_airport": "SGN",
-      "departure_date": "2026-11-29",
-      "price": 6000,
-      "airlines": [
-        "中華航空"
-      ],
-      "stops": 0,
-      "duration_minutes": 150,
+      "duration_minutes": 215,
       "departure_time": "07:30",
-      "arrival_time": "10:00",
-      "is_best": false,
-      "provider": "google-flights",
+      "arrival_time": "10:05",
+      "is_best": true,
       "is_deal": false,
-      "baseline_median": null
+      "baseline_median": 8800,
+      "provider": "google-flights"
     },
     {
       "from_airport": "TPE",
-      "to_airport": "SGN",
-      "departure_date": "2026-11-29",
-      "price": 6989,
-      "airlines": [
-        "國泰航空"
-      ],
+      "to_airport": "BKK",
+      "departure_date": "2026-12-17",
+      "price": 9100,
+      "airlines": ["VN"],
       "stops": 1,
-      "duration_minutes": 290,
-      "departure_time": "19:40",
-      "arrival_time": "00:30",
+      "duration_minutes": 395,
+      "departure_time": "09:40",
+      "arrival_time": "16:15",
       "is_best": false,
-      "provider": "google-flights",
       "is_deal": false,
-      "baseline_median": null
+      "baseline_median": 8800,
+      "provider": "google-flights"
     },
     {
       "from_airport": "TPE",
       "to_airport": "SGN",
-      "departure_date": "2026-11-29",
-      "price": 7571,
-      "airlines": [
-        "長榮航空"
-      ],
+      "departure_date": "2027-01-15",
+      "price": 7200,
+      "airlines": ["VN"],
       "stops": 0,
-      "duration_minutes": 145,
-      "departure_time": "09:10",
-      "arrival_time": "11:35",
-      "is_best": false,
-      "provider": "google-flights",
+      "duration_minutes": 205,
+      "departure_time": "07:45",
+      "arrival_time": "10:10",
+      "is_best": true,
       "is_deal": false,
-      "baseline_median": null
-    },
-    {
-      "from_airport": "TPE",
-      "to_airport": "SGN",
-      "departure_date": "2026-11-29",
-      "price": 10770,
-      "airlines": [
-        "星宇航空"
-      ],
-      "stops": 0,
-      "duration_minutes": 170,
-      "departure_time": "07:40",
-      "arrival_time": "10:30",
-      "is_best": false,
-      "provider": "google-flights",
-      "is_deal": false,
-      "baseline_median": null
-    },
-    {
-      "from_airport": "TPE",
-      "to_airport": "SGN",
-      "departure_date": "2026-11-29",
-      "price": 10770,
-      "airlines": [
-        "星宇航空"
-      ],
-      "stops": 0,
-      "duration_minutes": 170,
-      "departure_time": "14:00",
-      "arrival_time": "16:50",
-      "is_best": false,
-      "provider": "google-flights",
-      "is_deal": false,
-      "baseline_median": null
+      "baseline_median": null,
+      "provider": "google-flights"
     }
   ],
-  "deals": []
+  "deals": [
+    {
+      "from_airport": "TPE",
+      "to_airport": "NRT",
+      "departure_date": "2026-12-01",
+      "price": 5988,
+      "airlines": ["BR"],
+      "stops": 0,
+      "duration_minutes": 185,
+      "departure_time": "08:40",
+      "arrival_time": "12:45",
+      "is_best": true,
+      "is_deal": true,
+      "baseline_median": 9650,
+      "provider": "google-flights"
+    },
+    {
+      "from_airport": "TPE",
+      "to_airport": "NRT",
+      "departure_date": "2026-12-01",
+      "price": 6300,
+      "airlines": ["JX"],
+      "stops": 0,
+      "duration_minutes": 190,
+      "departure_time": "10:05",
+      "arrival_time": "14:15",
+      "is_best": false,
+      "is_deal": true,
+      "baseline_median": 9650,
+      "provider": "google-flights"
+    }
+  ]
 }

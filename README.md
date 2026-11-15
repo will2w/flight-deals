@@ -15,7 +15,7 @@ flight-deals/
 │   ├── provider.py             # Google Flights 資料來源（無 Key）
 │   ├── store.py                # JSON 快照 + CSV 歷史
 │   └── pipeline.py             # 主流程（python -m src.pipeline）
-├── app.py                      # Streamlit 前端
+├── app.py                      # Streamlit 前端（即時搜尋 / 監控清單 / 價格走勢）
 ├── data/
 │   ├── deals.json              # 最新結果（目前為示範資料）
 │   └── history.csv             # 累積歷史票價
@@ -33,6 +33,16 @@ streamlit run app.py       # 開啟前端 http://localhost:8501
 ```
 
 `data/deals.json` 目前附的是**示範資料**（`is_sample: true`），第一次跑完 pipeline 就會被真實資料覆蓋。
+
+## 前端功能
+
+`app.py` 分成三個頁籤：
+
+- **即時搜尋**：自己選出發地／目的地（內建約 90 個常用機場）、出發日、艙等與轉機限制，按「搜尋」即時查 Google Flights。可勾「彈性日期 ±N 天」一次比較前後幾天，附各日期最低價柱狀圖，並可下載 CSV。同條件 30 分鐘內走快取。
+- **監控清單**：`config/routes.yaml` 排程抓到的結果，可依航線／價格／轉機篩選，並標出特價。
+- **價格走勢**：以 `data/history.csv` 畫出「某航線某出發日」的最低票價隨時間變化。
+
+機場清單在 `app.py` 的 `AIRPORTS` 字典，可直接增刪。
 
 ## 部署到 GitHub
 
