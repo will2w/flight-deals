@@ -27,6 +27,7 @@ from src.provider import GoogleFlightsProvider  # noqa: E402
 from src.store import read_history  # noqa: E402
 
 SNAPSHOT_PATH = ROOT / "data" / "deals.json"
+HISTORY_PATH = ROOT / "data" / "history.csv"
 
 SEAT_LABELS = {
     "economy": "經濟艙",
