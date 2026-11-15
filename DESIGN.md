@@ -56,7 +56,7 @@ GitHub 在這個專案裡扮演三個角色，兩個免費服務直接綁同一�
         │         │                                              │
         │         ▼                                              │
         │  provider.py  GoogleFlightsProvider                    │
-        │         │  （fast-flights，無需 Key）                   │
+        │         │  （faster-flights，無需 Key）                 │
         │         ▼                                              │
         │  正規化為 Offer {價格, 航司, 轉機數, 時長, 時間}          │
         │         │                                              │
@@ -81,14 +81,14 @@ GitHub 在這個專案裡扮演三個角色，兩個免費服務直接綁同一�
 
 | 方案 | 需要 Key | 覆蓋度 | 穩定性 | 結論 |
 |---|---|---|---|---|
-| **fast-flights（Google Flights 爬蟲）** | 否 | 全球、聚合各家 OTA | 中（Google 改版時需更新套件） | **本方案採用** |
+| **faster-flights（Google Flights 擷取）** | 否 | 全球、聚合各家 OTA | 中（Google 改版時需更新套件） | **本方案採用** |
 | Kiwi.com 公開 GraphQL | 否 | 歐洲強 | 低（有 Cloudflare） | 可作為備援 provider |
 | Amadeus / Kiwi Tequila 官方 API | **是** | 高 | 高 | 免費額度小，違背「無 Key」 |
 | RSS / 特價郵件聚合 | 否 | 只看已發布的促銷 | 高 | 適合當「促銷情報」補充來源 |
 
-**採用理由**：`fast-flights` 直接把 Google Flights 的查詢參數（Base64 protobuf）組出來再解析回傳 HTML，**不需要帳號、不需要 Key**，且回傳資料已結構化（價格、航司、轉機、時間、碳排）。
+**採用理由**：`faster-flights` 支援 Google Flights 查詢與往返二階段流程，可取得選定去程對應的回程結果；**不需要帳號、不需要 Key**，且回傳資料已結構化（價格、航司、轉機、時間、碳排）。
 
-**回傳資料模型（v3.1 實測結構）**
+**回傳資料模型（faster-flights 3.x）**
 ```
 get_flights(query) -> ResultList[Flights]
 
@@ -105,6 +105,8 @@ SingleFlight:
   duration: int             # 分鐘
   plane_type: str
 ```
+
+往返搜尋依官方流程先選去程，再查該去程可搭配的回程，價格採 Google 回傳的組合總價。開口行程目前把各段單程結果配對，票價為單程報價加總估算，並非保證的多城市聯程總價。
 
 **風險**：Google 反爬與改版。對策見 §9。
 
@@ -145,7 +147,7 @@ SingleFlight:
     {
       "from_airport": "TPE", "to_airport": "NRT", "departure_date": "2026-12-01",
       "price": 299, "currency": "EUR", "airlines": ["BR"], "stops": 0,
-      "trip_type": "one-way", "return_date": null,
+      "trip_type": "one-way", "price_basis": "google_quote", "return_date": null,
       "segments": [{"from_airport": "TPE", "to_airport": "NRT"}],
       "transfer_airports": [], "duration_minutes": 185,
       "departure_time": "08:40", "arrival_time": "12:45",
@@ -203,7 +205,7 @@ is_deal(price) =
 - **節流**：每次查詢間隔 `search_delay_seconds`（預設 2 秒），控制每日請求量。
 - **失敗隔離**：單一航線失敗不中斷整批，錯誤記入 `summary.failures`。
 - **失敗重試**：可在外層加上指數退避重試（本 MVP 先記錄，不重試）。
-- **代理**：`fast-flights` 的 `get_flights()` 支援 `proxy=` 參數；CI 大量請求被擋時可接 Bright Data 之類的住宅代理。
+- **代理**：`faster-flights` 的查詢函式支援 `proxy=` 參數；CI 大量請求被擋時可接 Bright Data 之類的住宅代理。
 - **降級**：若 Google Flights 長期無法解析，切換到 Kiwi／官方 API provider（介面已預留）。
 
 ---

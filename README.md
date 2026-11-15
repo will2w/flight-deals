@@ -1,7 +1,7 @@
 # 特價機票監控
 
 用 **GitHub Actions 定時抓票價 + Git 當資料庫 + Streamlit 當前端** 的特價機票搜索程序。
-票價資料來源為 Google Flights（透過 `fast-flights`），**不需要航班 API Key**；航班票價與歷史比較統一使用 **EUR**。
+票價資料來源為 Google Flights（透過 `faster-flights`），**不需要航班 API Key**；航班票價與歷史比較統一使用 **EUR**。
 
 架構與設計理由詳見 [DESIGN.md](./DESIGN.md)。
 
@@ -31,7 +31,7 @@ flight-deals/
 - **監控清單**：在頁面直接新增／移除航線；有設定 GitHub Token 時，可按「保存並更新排程」直接更新 GitHub 的 `config/routes.yaml`，Actions 下次排程即採用新航線。也可下載設定檔後在 GitHub 網頁手動更新。
 - **價格走勢**：以 EUR 歷史價格繪製「某航線某出發日」的最低票價走勢。
 
-常用機場顯示繁體中文名稱，其餘機場由 `airportsdata` IATA 資料集補齊。行程表以小時分別顯示去程／回程時長，並列出各段轉機機場；直飛行程顯示「直飛」。往返及開口方案的價格是整趟行程總價。
+常用機場顯示繁體中文名稱，其餘機場由 `airportsdata` IATA 資料集補齊。行程表以小時分別顯示去程／回程時長，並列出各段轉機機場；直飛行程顯示「直飛」。往返價格使用 Google 選定去程後提供的組合總價；開口方案則是各段單程報價加總估算，不保證等同 Google 的多城市組合票價。
 
 ### 啟用網頁直接保存航線
 
@@ -81,7 +81,7 @@ Token 只放在 Streamlit Secrets，不要寫進程式碼或提交到倉庫。�
 ## 常見問題
 
 **抓不到資料 / 全部失敗？**
-Google 反爬或頁面改版。可在 GitHub 網頁提高 `config/routes.yaml` 的 `search_delay_seconds`、減少航線數量；若套件需要更新，在 `requirements.txt` 提高 `fast-flights` 版本後 Commit。
+Google 反爬或頁面改版。可在 GitHub 網頁提高 `config/routes.yaml` 的 `search_delay_seconds`、減少航線數量；若套件需要更新，在 `requirements.txt` 調整 `faster-flights` 版本後 Commit。
 
 **為什麼特價都是空的？**
 首次執行沒有歷史基準，只會記錄、不判定特價。累積數次資料後才會開始標記。

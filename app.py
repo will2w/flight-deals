@@ -310,12 +310,23 @@ def render_results(df: pd.DataFrame, currency: str) -> None:
         lambda segments: _segment_duration(segments, 1)
     )
     view["轉機地點"] = view["segments"].apply(_format_itinerary_transfers)
+    price_basis = view.get(
+        "price_basis", pd.Series("google_quote", index=view.index)
+    )
+    view["價格依據"] = price_basis.map(
+        {
+            "google_quote": "Google 報價",
+            "google_round_trip_total": "Google 往返總價",
+            "sum_of_one_way_quotes": "單程票價加總估算",
+        }
+    ).fillna("Google 報價")
     view["特價"] = view["is_deal"].map({True: "是", False: ""})
     columns = {
         "行程": "行程",
         "departure_date": "去程日",
         "return_date": "回程日",
         "price": f"票價 ({currency})",
+        "價格依據": "價格依據",
         "baseline_median": f"歷史中位數 ({currency})",
         "航空公司": "航空公司",
         "stops": "轉機",
@@ -465,7 +476,10 @@ def search_tab() -> None:
 
         submitted = st.form_submit_button("搜尋", type="primary", use_container_width=True)
 
-    st.caption("往返與開口行程顯示整趟總價；歷史特價判定目前只套用於單程。")
+    st.caption(
+        "往返價格是 Google 選定去程後回傳的整趟票價；開口價格是各段單程報價加總估算。"
+        "歷史特價判定目前只套用於單程。"
+    )
 
     if submitted:
         if origin == destination:
