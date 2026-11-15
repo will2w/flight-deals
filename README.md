@@ -1,7 +1,7 @@
 # 特價機票監控
 
 用 **GitHub Actions 定時抓票價 + Git 當資料庫 + Streamlit 當前端** 的特價機票搜索程序。
-票價資料來源為 Google Flights（透過 `faster-flights`），**不需要航班 API Key**；航班票價與歷史比較統一使用 **EUR**。
+排程監控使用 `fast-flights` 擷取 Google Flights，無需航班 API Key；即時搜尋可選擇套件文件推薦的 SearchApi 整合，以取得更一致且更豐富的結果。SearchApi 需要 API Key，並可能按用量收費。航班票價與歷史比較統一使用 **EUR**。
 
 架構與設計理由詳見 [DESIGN.md](./DESIGN.md)。
 
@@ -13,7 +13,7 @@ flight-deals/
 ├── src/
 │   ├── config.py               # 讀設定、展開出發日
 │   ├── github_config.py        # 從 Streamlit 將航線設定保存回 GitHub
-│   ├── provider.py             # Google Flights 資料來源（無 Key）
+│   ├── provider.py             # fast-flights / 可選 SearchApi 資料來源
 │   ├── store.py                # JSON 快照 + CSV 歷史
 │   └── pipeline.py             # 主流程（python -m src.pipeline）
 ├── app.py                      # Streamlit 前端（即時搜尋 / 監控清單 / 價格走勢）
@@ -27,11 +27,21 @@ flight-deals/
 
 `app.py` 分成三個頁籤：
 
-- **即時搜尋**：使用完整 IATA 機場清單搜尋出發地與目的地，可選**單程、往返、目的地開口（A→B、C→A）或出發地開口（A→B、B→C）**。選日期、艙等與轉機限制後查 Google Flights；可比較去程彈性日期，查看每段時長及轉機地點，並下載 CSV。同條件 30 分鐘內走快取。
+- **即時搜尋**：使用完整 IATA 機場清單搜尋出發地與目的地，可選**單程、往返、目的地開口（A→B、C→A）或出發地開口（A→B、B→C）**。選日期、艙等與轉機限制後查 Google Flights；可比較去程彈性日期，查看每段時長及轉機地點，並下載 CSV。同條件 30 分鐘內走快取。若設定 `SEARCHAPI_KEY`，即時搜尋會透過 `fast-flights` 官方 SearchApi 整合；未設定時使用免費擷取，結果可能與 Google Flights 網頁不同。
 - **監控清單**：在頁面直接新增／移除航線；有設定 GitHub Token 時，可按「保存並更新排程」直接更新 GitHub 的 `config/routes.yaml`，Actions 下次排程即採用新航線。也可下載設定檔後在 GitHub 網頁手動更新。
 - **價格走勢**：以 EUR 歷史價格繪製「某航線某出發日」的最低票價走勢。
 
-常用機場顯示繁體中文名稱，其餘機場由 `airportsdata` IATA 資料集補齊。行程表以小時分別顯示去程／回程時長，並列出各段轉機機場；直飛行程顯示「直飛」。往返價格使用 Google 選定去程後提供的組合總價；開口方案則是各段單程報價加總估算，不保證等同 Google 的多城市組合票價。
+常用機場顯示繁體中文名稱，其餘機場由 `airportsdata` IATA 資料集補齊。行程表以小時分別顯示去程／回程時長，並列出各段轉機機場；直飛行程顯示「直飛」。往返使用同一次雙航段查詢回傳的總價；開口方案則是各段單程報價加總估算，不保證等同 Google 的多城市組合票價。
+
+### 即時搜尋價格來源
+
+`fast-flights` 3.1.0 的文件提供 `SearchApi` 整合，並指出它可提供較一致、較豐富的資料。建立 SearchApi 帳戶並確認價格／用量方案後，到 Streamlit Cloud → App settings → Secrets 加入：
+
+```toml
+SEARCHAPI_KEY = "你的 SearchApi API Key"
+```
+
+金鑰只放在 Streamlit Secrets，不要放進 GitHub 檔案。若不設定，App 仍可使用 `fast-flights` 免費擷取，但擷取價格可能與 Google Flights 網頁顯示有差異。GitHub Actions 的排程監控仍使用免費擷取，不會讀取 Streamlit Secrets。
 
 ### 啟用網頁直接保存航線
 
@@ -41,6 +51,7 @@ flight-deals/
 GITHUB_TOKEN = "github_pat_..."
 GITHUB_REPOSITORY = "你的帳號/flight-deals"
 GITHUB_BRANCH = "main"
+SEARCHAPI_KEY = "你的 SearchApi API Key（可選）"
 ```
 
 Token 只放在 Streamlit Secrets，不要寫進程式碼或提交到倉庫。若不設定 Token，仍可在頁面編輯清單並下載 `routes.yaml`，再用 GitHub 網頁上傳。
@@ -81,10 +92,10 @@ Token 只放在 Streamlit Secrets，不要寫進程式碼或提交到倉庫。�
 ## 常見問題
 
 **抓不到資料 / 全部失敗？**
-Google 反爬或頁面改版。可在 GitHub 網頁提高 `config/routes.yaml` 的 `search_delay_seconds`、減少航線數量；若套件需要更新，在 `requirements.txt` 調整 `faster-flights` 版本後 Commit。
+Google 反爬或頁面改版。可在 GitHub 網頁提高 `config/routes.yaml` 的 `search_delay_seconds`、減少航線數量；若套件需要更新，在 `requirements.txt` 調整 `fast-flights` 版本後 Commit。
 
 **為什麼特價都是空的？**
 首次執行沒有歷史基準，只會記錄、不判定特價。累積數次資料後才會開始標記。
 
 **票價準嗎？**
-Google Flights 為聚合價，可能含第三方 OTA 或自助轉機行程，僅供參考，下單前請以航司即時報價為準。
+`fast-flights` 免費擷取結果可能不完整，與 Google Flights 網頁報價不同；可用 SearchApi 整合改善一致性，但仍是聚合報價，可能含第三方 OTA 或自助轉機行程。所有價格僅供參考，下單前請以航司或 OTA 即時報價為準。

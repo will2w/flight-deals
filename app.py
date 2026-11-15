@@ -119,9 +119,15 @@ def cached_search(
     currency: str,
     language: str,
     max_stops: int | None,
+    search_api_key: str,
 ) -> list[dict]:
     """即時查多航段行程；同條件 30 分鐘內走快取。"""
-    provider = GoogleFlightsProvider(currency=currency, language=language, seat=seat)
+    provider = GoogleFlightsProvider(
+        currency=currency,
+        language=language,
+        seat=seat,
+        search_api_key=search_api_key or None,
+    )
     offers = provider.search_itinerary(
         list(segments), trip_type=trip_type, max_stops=max_stops
     )
@@ -311,15 +317,17 @@ def render_results(df: pd.DataFrame, currency: str) -> None:
     )
     view["轉機地點"] = view["segments"].apply(_format_itinerary_transfers)
     price_basis = view.get(
-        "price_basis", pd.Series("google_quote", index=view.index)
+        "price_basis", pd.Series("fast_flights_quote", index=view.index)
     )
     view["價格依據"] = price_basis.map(
         {
-            "google_quote": "Google 報價",
+            "google_quote": "fast-flights 擷取報價",
+            "fast_flights_quote": "fast-flights 擷取報價",
             "google_round_trip_total": "Google 往返總價",
             "sum_of_one_way_quotes": "單程票價加總估算",
+            "searchapi_quote": "SearchApi 報價",
         }
-    ).fillna("Google 報價")
+    ).fillna("fast-flights 擷取報價")
     view["特價"] = view["is_deal"].map({True: "是", False: ""})
     columns = {
         "行程": "行程",
@@ -382,6 +390,7 @@ def run_search(
     requests: list[tuple[tuple[tuple[str, str, str], ...], str]],
     seat: str,
     max_stops: int | None,
+    search_api_key: str,
 ) -> tuple[list[dict], list[str]]:
     """逐個日期組合查詢，單一組合失敗不中斷整批。"""
     rows: list[dict] = []
@@ -397,6 +406,7 @@ def run_search(
                     config.settings.currency,
                     config.settings.language,
                     max_stops,
+                    search_api_key,
                 )
             )
         except Exception as exc:
@@ -476,8 +486,19 @@ def search_tab() -> None:
 
         submitted = st.form_submit_button("搜尋", type="primary", use_container_width=True)
 
+    search_api_key = read_secret("SEARCHAPI_KEY")
+    if search_api_key:
+        st.caption(
+            "即時搜尋使用 fast-flights 官方 SearchApi 整合，幣別為 EUR。"
+            "SearchApi 可能按用量收費，請先確認其方案與額度。"
+        )
+    else:
+        st.caption(
+            "目前使用 fast-flights 免費擷取；Google Flights 網頁與擷取結果可能不同。"
+            "若要使用套件文件推薦的 SearchApi，請在 Streamlit Cloud Secrets 設定 SEARCHAPI_KEY。"
+        )
     st.caption(
-        "往返價格是 Google 選定去程後回傳的整趟票價；開口價格是各段單程報價加總估算。"
+        "往返使用同一次雙航段查詢的總價；開口價格是各段單程報價加總估算。"
         "歷史特價判定目前只套用於單程。"
     )
 
@@ -513,7 +534,11 @@ def search_tab() -> None:
                 requests.append((tuple(segments), trip_type))
 
             rows, errors = run_search(
-                config, requests, seat, STOP_CHOICES[stops_label]
+                config,
+                requests,
+                seat,
+                STOP_CHOICES[stops_label],
+                search_api_key,
             )
             # 存進 session_state，避免側欄或下載按鈕觸發 rerun 後結果消失
             st.session_state["search_result"] = {
@@ -526,13 +551,13 @@ def search_tab() -> None:
 
     result = st.session_state.get("search_result")
     if not result:
-        st.caption("選擇航線與日期後按「搜尋」。每次查詢 Google Flights 約需數秒，結果會快取 30 分鐘。")
+        st.caption("選擇航線與日期後按「搜尋」。結果會快取 30 分鐘。")
         return
 
     for message in result["errors"]:
         st.warning(f"查詢失敗 {message}")
     if not result["rows"]:
-        st.error("沒有取得任何票價。可能是 Google 反爬或暫時無法解析，請稍後重試。")
+        st.error("沒有取得任何票價。請稍後重試，或檢查查價服務設定與用量。")
         return
 
     df = mark_deals(result["rows"])

@@ -1,4 +1,4 @@
-"""資料來源：Google Flights（透過 faster-flights，無需 API Key）。
+"""Google Flights 資料來源，使用 fast-flights 3.x API。
 
 對外只暴露一個統一介面 `Provider.search()`，回傳正規化後的 Offer 清單，
 之後要換成 Kiwi 或官方 API，只需新增另一個 Provider 實作。
@@ -13,13 +13,10 @@ from itertools import product
 from fast_flights import (
     FlightQuery,
     Passengers,
-    ShoppingOptions,
     create_query,
     get_flights,
-    get_flights_multicity,
-    get_return_flights,
-    select_flight,
 )
+from fast_flights.integrations import SearchApi
 
 log = logging.getLogger(__name__)
 
@@ -34,7 +31,7 @@ class Offer:
     price: int
     currency: str = "EUR"
     trip_type: str = "one-way"
-    price_basis: str = "google_quote"
+    price_basis: str = "fast_flights_quote"
     return_date: str | None = None
     segments: list[dict] = field(default_factory=list)
     airlines: list[str] = field(default_factory=list)
@@ -51,14 +48,21 @@ class Offer:
 
 
 class GoogleFlightsProvider:
-    """用 faster-flights 查 Google Flights 票價。"""
+    """用 fast-flights 查 Google Flights；可選用官方 SearchApi 整合。"""
 
     name = "google-flights"
 
-    def __init__(self, currency: str = "EUR", language: str = "zh-TW", seat: str = "economy"):
+    def __init__(
+        self,
+        currency: str = "EUR",
+        language: str = "zh-TW",
+        seat: str = "economy",
+        search_api_key: str | None = None,
+    ):
         self.currency = currency
         self.language = language
         self.seat = seat
+        self.search_api_key = search_api_key.strip() if search_api_key else None
 
     def search(
         self,
@@ -85,21 +89,18 @@ class GoogleFlightsProvider:
         """
         if not segments:
             raise ValueError("至少需要一段航程。")
-        flight_queries = [
-            FlightQuery(
-                date=departure_date,
-                from_airport=origin,
-                to_airport=destination,
-                max_stops=max_stops,
-            )
-            for origin, destination, departure_date in segments
-        ]
-
         if trip_type == "multi-city":
-            return self._search_multicity(segments, flight_queries)
+            return self._search_multicity(segments, max_stops)
 
         query = create_query(
-            flights=flight_queries,
+            flights=[
+                FlightQuery(
+                    date=departure_date,
+                    from_airport=origin,
+                    to_airport=destination,
+                )
+                for origin, destination, departure_date in segments
+            ],
             seat=self.seat,  # type: ignore[arg-type]
             trip=trip_type,  # type: ignore[arg-type]
             passengers=Passengers(adults=1),
@@ -107,131 +108,147 @@ class GoogleFlightsProvider:
             currency=self.currency,
             max_stops=max_stops,
         )
-        if trip_type == "round-trip":
-            return self._search_round_trip(query, segments)
-
-        results = get_flights(query)
+        results, is_searchapi = self._fetch(query)
         offers = []
-        for item in results:
-            if item.price is None:
-                continue
+        for item in (results.flights if is_searchapi else results):
             try:
-                offers.append(
-                    self._to_offer(item, segments, trip_type, self.currency)
-                )
+                if is_searchapi:
+                    offer = _searchapi_offer(
+                        item, segments, trip_type, self.currency
+                    )
+                else:
+                    if item.price is None:
+                        continue
+                    offer = self._to_offer(
+                        item,
+                        segments,
+                        trip_type,
+                        self.currency,
+                        price_basis=(
+                            "google_round_trip_total"
+                            if trip_type == "round-trip"
+                            else "fast_flights_quote"
+                        ),
+                    )
+                if offer is not None:
+                    offers.append(offer)
             except ValueError as exc:
                 log.warning("略過不完整的航班結果：%s", exc)
-        return offers
-
-    def _search_round_trip(
-        self, query, segments: list[tuple[str, str, str]]
-    ) -> list[Offer]:
-        """選最便宜的去程，再查它對應的回程與往返總價。"""
-        shopping = ShoppingOptions(ranking_mode="cheapest", result_sort="price")
-        outbound_options = get_flights(query, shopping=shopping)
-        outbound_options = sorted(
-            (item for item in outbound_options if item.price is not None),
-            key=lambda item: item.price,
-        )[:1]
-
-        offers = []
-        for outbound in outbound_options:
-            try:
-                return_options = get_return_flights(
-                    select_flight(query, outbound),
-                    shopping=shopping,
-                )
-            except Exception as exc:
-                log.warning("無法取得完整回程選項：%s", exc)
-                continue
-
-            for returning in return_options:
-                if returning.price is None or not returning.flights:
-                    continue
-                try:
-                    offers.append(
-                        self._to_offer(
-                            outbound,
-                            segments,
-                            "round-trip",
-                            self.currency,
-                            flight_legs=[*outbound.flights, *returning.flights],
-                            price=returning.price,
-                            airlines=list(
-                                dict.fromkeys(
-                                    [
-                                        *(outbound.airlines or []),
-                                        *(returning.airlines or []),
-                                    ]
-                                )
-                            ),
-                            price_basis="google_round_trip_total",
-                        )
-                    )
-                except ValueError as exc:
-                    log.warning("略過不完整的往返結果：%s", exc)
-
         if not offers:
-            raise ValueError(
-                "Google Flights 未回傳可核對的完整往返行程，請稍後重試。"
-            )
+            raise ValueError("fast-flights 沒有回傳可核對的完整航班行程。")
         return offers
+
+    def _fetch(self, query):
+        """依 fast-flights 官方整合介面查詢，避免洩漏第三方 API Key。"""
+        if not self.search_api_key:
+            return get_flights(query), False
+        try:
+            return get_flights(
+                query,
+                integration=SearchApi(api_key=self.search_api_key),
+            ), True
+        except Exception as exc:
+            log.warning("SearchApi 查價失敗：%s", type(exc).__name__)
+            raise ValueError(
+                "SearchApi 查價失敗，請檢查 API Key 與服務用量。"
+            ) from None
 
     def _search_multicity(
         self,
         segments: list[tuple[str, str, str]],
-        flight_queries: list[FlightQuery],
+        max_stops: int | None,
     ) -> list[Offer]:
-        """開口航段分別查單程價，最多取每段前 5 個組合估算總價。"""
-        legs = get_flights_multicity(
-            flights=flight_queries,
-            seat=self.seat,  # type: ignore[arg-type]
-            passengers=Passengers(adults=1),
-            language=self.language,
-            currency=self.currency,
-        )
+        """依 fast-flights 支援範圍分段查單程價，估算開口行程總價。"""
         choices = [
-            sorted(
-                (item for item in leg.results if item.price is not None),
-                key=lambda item: item.price,
-            )[:5]
-            for leg in legs
+            self._search_single_segment(segment, max_stops)[:5]
+            for segment in segments
         ]
         if len(choices) != len(segments) or any(not leg for leg in choices):
             raise ValueError("開口行程至少有一段沒有查到可用航班。")
 
-        offers = []
+        offers: list[Offer] = []
         for selected in product(*choices):
-            price = sum(int(item.price) for item in selected)
+            chosen_segments = [
+                segment
+                for offer in selected
+                for segment in offer.segments
+            ]
             airlines = list(
-                dict.fromkeys(
-                    airline
-                    for item in selected
-                    for airline in (item.airlines or [])
+                dict.fromkeys(airline for offer in selected for airline in offer.airlines)
+            )
+            transfers = [
+                airport
+                for offer in selected
+                for airport in offer.transfer_airports
+            ]
+            offers.append(
+                Offer(
+                    from_airport=segments[0][0],
+                    to_airport=segments[0][1],
+                    departure_date=segments[0][2],
+                    price=sum(offer.price for offer in selected),
+                    currency=self.currency,
+                    trip_type="multi-city",
+                    price_basis="sum_of_one_way_quotes",
+                    return_date=segments[1][2] if len(segments) > 1 else None,
+                    segments=chosen_segments,
+                    airlines=airlines,
+                    stops=sum(offer.stops for offer in selected),
+                    transfer_airports=transfers,
+                    duration_minutes=sum(
+                        offer.duration_minutes for offer in selected
+                    ),
+                    departure_time=selected[0].departure_time,
+                    arrival_time=selected[-1].arrival_time,
+                    is_best=all(offer.is_best for offer in selected),
+                    provider=selected[0].provider,
                 )
             )
-            try:
-                offers.append(
-                    self._to_offer(
-                        selected[0],
-                        segments,
-                        "multi-city",
-                        self.currency,
-                        flight_legs=[
-                            leg
-                            for item in selected
-                            for leg in item.flights
-                        ],
-                        price=price,
-                        airlines=airlines,
-                        price_basis="sum_of_one_way_quotes",
-                    )
-                )
-            except ValueError as exc:
-                log.warning("略過不完整的開口行程組合：%s", exc)
         if not offers:
             raise ValueError("沒有取得航段方向完整的開口行程組合。")
         return offers
+
+    def _search_single_segment(
+        self,
+        segment: tuple[str, str, str],
+        max_stops: int | None,
+    ) -> list[Offer]:
+        origin, destination, departure_date = segment
+        query = create_query(
+            flights=[
+                FlightQuery(
+                    date=departure_date,
+                    from_airport=origin,
+                    to_airport=destination,
+                )
+            ],
+            seat=self.seat,  # type: ignore[arg-type]
+            trip="one-way",
+            passengers=Passengers(adults=1),
+            language=self.language,
+            currency=self.currency,
+            max_stops=max_stops,
+        )
+        results, is_searchapi = self._fetch(query)
+        offers: list[Offer] = []
+        for item in (results.flights if is_searchapi else results):
+            if not is_searchapi and item.price is None:
+                continue
+            try:
+                offer = (
+                    _searchapi_offer(
+                        item, [segment], "one-way", self.currency
+                    )
+                    if is_searchapi
+                    else self._to_offer(
+                        item, [segment], "one-way", self.currency
+                    )
+                )
+                if offer is not None:
+                    offers.append(offer)
+            except ValueError as exc:
+                log.warning("略過不完整的開口航段報價：%s", exc)
+        return sorted(offers, key=lambda offer: offer.price)
 
     @staticmethod
     def _to_offer(
@@ -297,7 +314,7 @@ class GoogleFlightsProvider:
             price=int(price if price is not None else item.price),
             currency=currency,
             trip_type=trip_type,
-            price_basis=price_basis or "google_quote",
+            price_basis=price_basis or "fast_flights_quote",
             return_date=requested_segments[1][2] if len(requested_segments) > 1 else None,
             segments=segment_offers,
             airlines=list(airlines if airlines is not None else item.airlines or []),
@@ -330,6 +347,102 @@ def _group_flight_legs(
 
     if cursor != len(flight_legs):
         raise ValueError("來源回傳了未能配對到查詢航段的航班。")
+    return grouped
+
+
+def _searchapi_offer(
+    item,
+    requested_segments: list[tuple[str, str, str]],
+    trip_type: str,
+    currency: str,
+) -> Offer | None:
+    flight_legs = item.segments or []
+    if item.price is None or not flight_legs:
+        return None
+
+    grouped_legs = _group_searchapi_legs(flight_legs, requested_segments)
+    segment_offers = []
+    layover_cursor = 0
+    for (origin, destination, departure_date), legs in zip(
+        requested_segments, grouped_legs
+    ):
+        stop_count = len(legs) - 1
+        layovers = (item.layovers or [])[layover_cursor : layover_cursor + stop_count]
+        layover_cursor += stop_count
+        first, last = legs[0], legs[-1]
+        transfers = []
+        for index, leg in enumerate(legs[:-1]):
+            layover = layovers[index] if index < len(layovers) else None
+            code = layover.airport_code if layover else leg.arrival.code
+            name = layover.airport_name if layover else leg.arrival.name
+            transfers.append(f"{code} {name}".strip())
+        segment_offers.append(
+            {
+                "from_airport": origin,
+                "to_airport": destination,
+                "departure_date": departure_date,
+                "departure_time": first.departure.time,
+                "arrival_time": last.arrival.time,
+                "duration_minutes": sum(leg.duration_min for leg in legs)
+                + sum(layover.duration_min for layover in layovers),
+                "stops": stop_count,
+                "transfer_airports": transfers,
+            }
+        )
+
+    first_segment, last_segment = segment_offers[0], segment_offers[-1]
+    airline_names = [
+        leg.airline for leg in flight_legs if getattr(leg, "airline", "")
+    ]
+    return Offer(
+        from_airport=requested_segments[0][0],
+        to_airport=requested_segments[0][1],
+        departure_date=requested_segments[0][2],
+        price=int(item.price),
+        currency=currency,
+        trip_type=trip_type,
+        price_basis="searchapi_quote",
+        return_date=requested_segments[1][2] if len(requested_segments) > 1 else None,
+        segments=segment_offers,
+        airlines=list(dict.fromkeys(airline_names)),
+        stops=sum(segment["stops"] for segment in segment_offers),
+        transfer_airports=[
+            airport
+            for segment in segment_offers
+            for airport in segment["transfer_airports"]
+        ],
+        duration_minutes=sum(
+            segment["duration_minutes"] for segment in segment_offers
+        ),
+        departure_time=first_segment["departure_time"],
+        arrival_time=last_segment["arrival_time"],
+        is_best=bool(getattr(item, "is_best", False)),
+        provider="searchapi",
+    )
+
+
+def _group_searchapi_legs(
+    flight_legs: list, requested_segments: list[tuple[str, str, str]]
+) -> list[list]:
+    grouped: list[list] = []
+    cursor = 0
+    for origin, destination, _ in requested_segments:
+        segment_legs = []
+        while cursor < len(flight_legs):
+            leg = flight_legs[cursor]
+            cursor += 1
+            segment_legs.append(leg)
+            if leg.arrival.code == destination:
+                break
+        if (
+            not segment_legs
+            or segment_legs[0].departure.code != origin
+            or segment_legs[-1].arrival.code != destination
+        ):
+            raise ValueError(f"SearchApi 航段方向不符：預期 {origin}→{destination}。")
+        grouped.append(segment_legs)
+    if cursor != len(flight_legs):
+        raise ValueError("SearchApi 回傳了未能配對到查詢航段的航班。")
     return grouped
 
 

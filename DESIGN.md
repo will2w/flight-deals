@@ -2,7 +2,7 @@
 
 ## 1. 目標與範圍
 
-**目標**：用全免費、**不需要任何 API Key** 的方式，持續監控指定航線的票價，自動標記「特價」，並用一個網頁前端呈現。
+**目標**：以 GitHub Actions 免費擷取並監控指定航線票價、自動標記「特價」，並用網頁前端呈現。即時搜尋可選擇 SearchApi 整合，以改善擷取一致性；此服務需 API Key，且可能按用量收費。
 
 **範圍（MVP）**
 - 定時抓取指定航線 × 指定出發日的**單程經濟艙**最低票價。
@@ -56,7 +56,7 @@ GitHub 在這個專案裡扮演三個角色，兩個免費服務直接綁同一�
         │         │                                              │
         │         ▼                                              │
         │  provider.py  GoogleFlightsProvider                    │
-        │         │  （faster-flights，無需 Key）                 │
+        │         │  （fast-flights；SearchApi 可選）               │
         │         ▼                                              │
         │  正規化為 Offer {價格, 航司, 轉機數, 時長, 時間}          │
         │         │                                              │
@@ -81,14 +81,15 @@ GitHub 在這個專案裡扮演三個角色，兩個免費服務直接綁同一�
 
 | 方案 | 需要 Key | 覆蓋度 | 穩定性 | 結論 |
 |---|---|---|---|---|
-| **faster-flights（Google Flights 擷取）** | 否 | 全球、聚合各家 OTA | 中（Google 改版時需更新套件） | **本方案採用** |
+| **fast-flights 3.1.0（Google Flights 擷取）** | 否 | 全球、聚合各家 OTA | 中（Google 改版時需更新套件） | 排程監控及無 Key 備用 |
+| **fast-flights SearchApi 整合** | **是** | Google Flights 結構化資料 | 依第三方服務 | 即時搜尋可選，可能收費 |
 | Kiwi.com 公開 GraphQL | 否 | 歐洲強 | 低（有 Cloudflare） | 可作為備援 provider |
 | Amadeus / Kiwi Tequila 官方 API | **是** | 高 | 高 | 免費額度小，違背「無 Key」 |
 | RSS / 特價郵件聚合 | 否 | 只看已發布的促銷 | 高 | 適合當「促銷情報」補充來源 |
 
-**採用理由**：`faster-flights` 支援 Google Flights 查詢與往返二階段流程，可取得選定去程對應的回程結果；**不需要帳號、不需要 Key**，且回傳資料已結構化（價格、航司、轉機、時間、碳排）。
+**採用理由**：專案依 `fast-flights` PyPI 3.1.0 的正式 API 實作。一般擷取使用 `create_query()` 與 `get_flights()`；需要提高資料一致性時，依文件透過 `get_flights(query, integration=SearchApi())` 使用 SearchApi。單程價差仍取決於資料來源、市場條件及票價即時變動，不能保證完全等同 Google Flights 網頁。
 
-**回傳資料模型（faster-flights 3.x）**
+**回傳資料模型（fast-flights 3.1.0）**
 ```
 get_flights(query) -> ResultList[Flights]
 
@@ -106,7 +107,7 @@ SingleFlight:
   plane_type: str
 ```
 
-往返搜尋依官方流程先選去程，再查該去程可搭配的回程，價格採 Google 回傳的組合總價。開口行程目前把各段單程結果配對，票價為單程報價加總估算，並非保證的多城市聯程總價。
+往返搜尋依 3.1.0 文件將去程及回程放在同一次 `round-trip` 查詢中，檢查每個回傳結果是否同時包含兩段，再採用來源提供的往返總價。開口行程目前把各段單程結果配對，票價為單程報價加總估算，並非保證的多城市聯程總價。
 
 **風險**：Google 反爬與改版。對策見 §9。
 
@@ -119,7 +120,7 @@ SingleFlight:
 | `config/routes.yaml` | 監控航線、幣別、出發日偏移、特價規則 | 純設定 |
 | `src/config.py` | 讀設定、展開出發日清單 | `load_config() -> AppConfig` |
 | `src/github_config.py` | 使用 Streamlit Secret 的 Fine-grained Token 回寫 `routes.yaml` | `update_routes(...)` |
-| `src/provider.py` | 資料來源；把單程、往返及多航段結果正規化成 `Offer` | `search_itinerary(segments, trip_type) -> list[Offer]` |
+| `src/provider.py` | fast-flights / 可選 SearchApi；將單程、往返及分段開口結果正規化成 `Offer` | `search_itinerary(segments, trip_type) -> list[Offer]` |
 | `src/store.py` | 快照 JSON 與歷史 CSV 讀寫 | `write_snapshot / append_history / load_history` |
 | `src/pipeline.py` | 主流程、特價判定、輸出 | `python -m src.pipeline` |
 | `app.py` | Streamlit 前端 | Streamlit Cloud 執行 |
@@ -147,7 +148,7 @@ SingleFlight:
     {
       "from_airport": "TPE", "to_airport": "NRT", "departure_date": "2026-12-01",
       "price": 299, "currency": "EUR", "airlines": ["BR"], "stops": 0,
-      "trip_type": "one-way", "price_basis": "google_quote", "return_date": null,
+      "trip_type": "one-way", "price_basis": "fast_flights_quote", "return_date": null,
       "segments": [{"from_airport": "TPE", "to_airport": "NRT"}],
       "transfer_airports": [], "duration_minutes": 185,
       "departure_time": "08:40", "arrival_time": "12:45",
@@ -205,7 +206,7 @@ is_deal(price) =
 - **節流**：每次查詢間隔 `search_delay_seconds`（預設 2 秒），控制每日請求量。
 - **失敗隔離**：單一航線失敗不中斷整批，錯誤記入 `summary.failures`。
 - **失敗重試**：可在外層加上指數退避重試（本 MVP 先記錄，不重試）。
-- **代理**：`faster-flights` 的查詢函式支援 `proxy=` 參數；CI 大量請求被擋時可接 Bright Data 之類的住宅代理。
+- **代理**：`fast-flights` 的查詢函式支援 `proxy=` 參數；CI 大量請求被擋時可接 Bright Data 之類的住宅代理。
 - **降級**：若 Google Flights 長期無法解析，切換到 Kiwi／官方 API provider（介面已預留）。
 
 ---
