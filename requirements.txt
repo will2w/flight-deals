@@ -3,3 +3,4 @@ airportsdata>=20241001
 PyYAML>=6.0
 pandas>=2.2
 streamlit>=1.40
+tzdata>=2024.1

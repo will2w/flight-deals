@@ -63,6 +63,12 @@ def collect_offers(config: AppConfig, baselines: dict[BaselineKey, list[int]]) -
         currency=config.settings.currency,
         language=config.settings.language,
         seat=config.settings.seat,
+        carry_on_bags=config.settings.carry_on_bags,
+        checked_bags=config.settings.checked_bags,
+        hide_separate_and_self_transfer=(
+            config.settings.hide_separate_and_self_transfer
+        ),
+        exclude_basic_economy=config.settings.exclude_basic_economy,
     )
     dates = config.departure_dates()
     offers: list[dict] = []

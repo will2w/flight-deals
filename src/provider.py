@@ -54,12 +54,20 @@ class GoogleFlightsProvider:
     def __init__(
         self,
         currency: str = "EUR",
-        language: str = "zh-TW",
+        language: str = "de",
         seat: str = "economy",
+        carry_on_bags: int = 0,
+        checked_bags: int = 0,
+        hide_separate_and_self_transfer: bool = False,
+        exclude_basic_economy: bool = False,
     ):
         self.currency = currency
         self.language = language
         self.seat = seat
+        self.carry_on_bags = carry_on_bags
+        self.checked_bags = checked_bags
+        self.hide_separate_and_self_transfer = hide_separate_and_self_transfer
+        self.exclude_basic_economy = exclude_basic_economy
 
     def search(
         self,
@@ -104,6 +112,10 @@ class GoogleFlightsProvider:
             language=self.language,
             currency=self.currency,
             max_stops=max_stops,
+            carry_on_bags=self.carry_on_bags,
+            checked_bags=self.checked_bags,
+            hide_separate_and_self_transfer=self.hide_separate_and_self_transfer,
+            exclude_basic_economy=self.exclude_basic_economy,
         )
         results = get_flights(query)
         offers = []
@@ -204,6 +216,10 @@ class GoogleFlightsProvider:
             language=self.language,
             currency=self.currency,
             max_stops=max_stops,
+            carry_on_bags=self.carry_on_bags,
+            checked_bags=self.checked_bags,
+            hide_separate_and_self_transfer=self.hide_separate_and_self_transfer,
+            exclude_basic_economy=self.exclude_basic_economy,
         )
         results = get_flights(query)
         offers: list[Offer] = []

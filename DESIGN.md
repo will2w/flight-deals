@@ -88,6 +88,8 @@ GitHub 在這個專案裡扮演三個角色，兩個免費服務直接綁同一�
 
 **採用理由**：專案依 `fast-flights` PyPI 3.1.0 的免費 API 實作，使用 `create_query()` 與 `get_flights()`，不匯入或呼叫付費整合。擷取價格可能與 Google Flights 網頁不同，且會隨市場條件及時間變動。
 
+德國使用預設為 `language="de"`、`currency="EUR"`。3.1.0 的 `Query.url()` 僅產生 `tfs`、`hl` 和 `curr` 參數，沒有設定國家市場的 `gl` 參數；因此德文介面和歐元已對齊，但 Streamlit Cloud 的出口位置仍可能影響市場結果。即時搜尋使用 5 分鐘快取，並記錄來源擷取時間；行李費、基本經濟艙及分開出票條件透過 3.1.0 支援的查詢參數控制。
+
 **回傳資料模型（fast-flights 3.1.0）**
 ```
 get_flights(query) -> ResultList[Flights]
@@ -202,10 +204,10 @@ is_deal(price) =
 
 ## 9. 反爬與穩定性
 
-- **節流**：每次查詢間隔 `search_delay_seconds`（預設 2 秒），控制每日請求量。
+- **節流**：每次查詢間隔 `search_delay_seconds`（預設 5 秒），減少連續請求；收到 HTTP 429 後停止該批查詢並冷卻 15 分鐘，不自動重試。
 - **失敗隔離**：單一航線失敗不中斷整批，錯誤記入 `summary.failures`。
 - **失敗重試**：可在外層加上指數退避重試（本 MVP 先記錄，不重試）。
-- **代理**：`fast-flights` 的查詢函式支援 `proxy=` 參數；CI 大量請求被擋時可接 Bright Data 之類的住宅代理。
+- **代理**：3.1.0 支援可選 `proxy=`，本專案不設定代理或付費擷取整合；不以代理規避 Google 限流。
 - **降級**：若 Google Flights 長期無法解析，切換到 Kiwi／官方 API provider（介面已預留）。
 
 ---

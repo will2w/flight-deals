@@ -21,11 +21,15 @@ class Route:
 @dataclass
 class Settings:
     currency: str = "EUR"
-    language: str = "zh-TW"
+    language: str = "de"
     seat: str = "economy"
+    carry_on_bags: int = 0
+    checked_bags: int = 0
+    hide_separate_and_self_transfer: bool = False
+    exclude_basic_economy: bool = False
     top_n: int = 5
     days_ahead: list[int] = field(default_factory=lambda: [14, 30, 60])
-    search_delay_seconds: float = 2.0
+    search_delay_seconds: float = 5.0
 
 
 @dataclass
@@ -53,11 +57,19 @@ def load_config(path: Path = CONFIG_PATH) -> AppConfig:
     return AppConfig(
         settings=Settings(
             currency=str(settings.get("currency", "EUR")),
-            language=str(settings.get("language", "zh-TW")),
+            language=str(settings.get("language", "de")),
             seat=str(settings.get("seat", "economy")),
+            carry_on_bags=int(settings.get("carry_on_bags", 0)),
+            checked_bags=int(settings.get("checked_bags", 0)),
+            hide_separate_and_self_transfer=bool(
+                settings.get("hide_separate_and_self_transfer", False)
+            ),
+            exclude_basic_economy=bool(
+                settings.get("exclude_basic_economy", False)
+            ),
             top_n=int(settings.get("top_n", 5)),
             days_ahead=[int(x) for x in settings.get("days_ahead", [14, 30, 60])],
-            search_delay_seconds=float(settings.get("search_delay_seconds", 2)),
+            search_delay_seconds=float(settings.get("search_delay_seconds", 5)),
         ),
         routes=[Route(str(r["from"]), str(r["to"])) for r in raw.get("routes", [])],
         deal_rules=DealRules(

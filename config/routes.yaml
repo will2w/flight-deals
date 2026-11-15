@@ -1,11 +1,15 @@
 # 監控設定（票價來源無需 API Key）
 settings:
   currency: EUR            # 幣別
-  language: zh-TW          # 語言
+  language: de             # Google Flights 語言（德國介面）
   seat: economy            # economy / premium-economy / business / first
+  carry_on_bags: 0         # 隨身行李數；0 表示不把行李費計入報價
+  checked_bags: 0          # 託運行李數；0 表示不把行李費計入報價
+  hide_separate_and_self_transfer: false # 排除分開出票／自行轉機
+  exclude_basic_economy: false # 是否排除基本經濟艙
   top_n: 5                 # 每條航線每個出發日，保留最便宜的幾個行程
   days_ahead: [14, 30, 60] # 從今天起，往後第 N 天出發
-  search_delay_seconds: 2  # 每次查詢之間隔，避免被擋
+  search_delay_seconds: 5  # 每次查詢之間隔，降低觸發限流的機會
 
 # 要監控的航線（三碼機場代碼）
 routes:

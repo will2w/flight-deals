@@ -9,8 +9,9 @@ import json
 import os
 import sys
 import time
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pandas as pd
 import streamlit as st
@@ -40,6 +41,7 @@ SEAT_LABELS = {
 }
 
 STOP_CHOICES = {"不限": None, "只要直飛": 0, "最多轉 1 次": 1}
+GOOGLE_429_COOLDOWN_SECONDS = 15 * 60
 
 # 常用機場（三碼代碼 -> 顯示名稱），可自行增刪
 AIRPORTS: dict[str, str] = {
@@ -111,7 +113,7 @@ def load_history() -> pd.DataFrame:
     return pd.read_csv(HISTORY_PATH)
 
 
-@st.cache_data(ttl=1800, show_spinner=False)
+@st.cache_data(ttl=300, show_spinner=False)
 def cached_search(
     segments: tuple[tuple[str, str, str], ...],
     trip_type: str,
@@ -119,17 +121,29 @@ def cached_search(
     currency: str,
     language: str,
     max_stops: int | None,
+    carry_on_bags: int,
+    checked_bags: int,
+    hide_separate_and_self_transfer: bool,
+    exclude_basic_economy: bool,
 ) -> list[dict]:
-    """即時查多航段行程；同條件 30 分鐘內走快取。"""
+    """查詢多航段行程；保留來源報價時間，快取 5 分鐘。"""
     provider = GoogleFlightsProvider(
         currency=currency,
         language=language,
         seat=seat,
+        carry_on_bags=carry_on_bags,
+        checked_bags=checked_bags,
+        hide_separate_and_self_transfer=hide_separate_and_self_transfer,
+        exclude_basic_economy=exclude_basic_economy,
     )
     offers = provider.search_itinerary(
         list(segments), trip_type=trip_type, max_stops=max_stops
     )
-    return [offer.to_dict() for offer in offers]
+    quote_checked_at = datetime.now(timezone.utc).isoformat()
+    return [
+        {**offer.to_dict(), "quote_checked_at": quote_checked_at}
+        for offer in offers
+    ]
 
 
 def mark_deals(rows: list[dict]) -> pd.DataFrame:
@@ -286,6 +300,19 @@ def render_results(df: pd.DataFrame, currency: str) -> None:
         st.info("沒有查到符合條件的行程，試著放寬轉機限制或換個日期。")
         return
 
+    if "quote_checked_at" in df:
+        quote_times = pd.to_datetime(
+            df["quote_checked_at"], utc=True, errors="coerce"
+        )
+    else:
+        quote_times = pd.Series(dtype="datetime64[ns, UTC]")
+        st.warning("這是沒有來源時間戳的舊結果，請重新搜尋取得新版報價。")
+    oldest_quote_time = quote_times.min()
+    if pd.notna(oldest_quote_time):
+        quote_age = (pd.Timestamp.now(tz="UTC") - oldest_quote_time).total_seconds()
+        if quote_age > 300:
+            st.warning("目前結果的來源報價已超過 5 分鐘，可能已變動；請重新搜尋確認。")
+
     cheapest = df.loc[df["price"].idxmin()]
     direct = df[df["stops"] == 0]
     col1, col2, col3 = st.columns(3)
@@ -314,6 +341,14 @@ def render_results(df: pd.DataFrame, currency: str) -> None:
         lambda segments: _segment_duration(segments, 1)
     )
     view["轉機地點"] = view["segments"].apply(_format_itinerary_transfers)
+    quote_source = (
+        view["quote_checked_at"]
+        if "quote_checked_at" in view
+        else pd.Series(pd.NaT, index=view.index, dtype="datetime64[ns, UTC]")
+    )
+    view["報價時間（柏林）"] = pd.to_datetime(
+        quote_source, utc=True, errors="coerce"
+    ).dt.tz_convert(ZoneInfo("Europe/Berlin")).dt.strftime("%Y-%m-%d %H:%M")
     price_basis = view.get(
         "price_basis", pd.Series("fast_flights_quote", index=view.index)
     )
@@ -331,6 +366,7 @@ def render_results(df: pd.DataFrame, currency: str) -> None:
         "departure_date": "去程日",
         "return_date": "回程日",
         "price": f"票價 ({currency})",
+        "報價時間（柏林）": "報價時間（柏林）",
         "價格依據": "價格依據",
         "baseline_median": f"歷史中位數 ({currency})",
         "航空公司": "航空公司",
@@ -387,6 +423,10 @@ def run_search(
     requests: list[tuple[tuple[tuple[str, str, str], ...], str]],
     seat: str,
     max_stops: int | None,
+    carry_on_bags: int,
+    checked_bags: int,
+    hide_separate_and_self_transfer: bool,
+    exclude_basic_economy: bool,
 ) -> tuple[list[dict], list[str]]:
     """逐個日期組合查詢，單一組合失敗不中斷整批。"""
     rows: list[dict] = []
@@ -402,10 +442,24 @@ def run_search(
                     config.settings.currency,
                     config.settings.language,
                     max_stops,
+                    carry_on_bags,
+                    checked_bags,
+                    hide_separate_and_self_transfer,
+                    exclude_basic_economy,
                 )
             )
         except Exception as exc:
             route = " / ".join(f"{origin}→{destination}" for origin, destination, _ in segments)
+            if "429" in str(exc):
+                st.session_state["google_rate_limit_until"] = (
+                    time.monotonic() + GOOGLE_429_COOLDOWN_SECONDS
+                )
+                errors.append(
+                    f"{route}：Google Flights 暫時限流 (HTTP 429)。"
+                    "已暫停本工作階段的後續查詢，請至少等候 15 分鐘再試；"
+                    "若仍被限流，請延長等待時間。"
+                )
+                break
             errors.append(f"{route}：{exc}")
         progress.progress((index + 1) / len(requests), text=f"查詢中… {index + 1}/{len(requests)}")
         if index < len(requests) - 1:
@@ -417,8 +471,21 @@ def run_search(
 def search_tab() -> None:
     config = load_config()
     codes = list(AIRPORTS)
-    default_origin = codes.index("TPE") if "TPE" in codes else 0
-    default_dest = codes.index("NRT") if "NRT" in codes else 1
+    default_origin = codes.index("FRA") if "FRA" in codes else 0
+    default_dest = codes.index("HKG") if "HKG" in codes else 1
+    cooldown_seconds = max(
+        0,
+        int(
+            st.session_state.get("google_rate_limit_until", 0)
+            - time.monotonic()
+        ),
+    )
+    if cooldown_seconds:
+        st.warning(
+            "Google Flights 回傳 HTTP 429，暫時停止查詢。"
+            f"本工作階段約 {max(1, (cooldown_seconds + 59) // 60)} 分鐘後可再試；"
+            "Google 的限流時間可能更長。"
+        )
 
     with st.form("search_form"):
         trip_label = st.radio(
@@ -479,10 +546,39 @@ def search_tab() -> None:
         seat = col5.selectbox("艙等", list(SEAT_LABELS), format_func=lambda s: SEAT_LABELS[s])
         stops_label = col6.radio("轉機", list(STOP_CHOICES), horizontal=True)
 
-        submitted = st.form_submit_button("搜尋", type="primary", use_container_width=True)
+        col7, col8, col9, col10 = st.columns(4)
+        carry_on_bags = col7.number_input(
+            "隨身行李數",
+            min_value=0,
+            max_value=2,
+            value=config.settings.carry_on_bags,
+            help="依 fast-flights 3.1.0 將估算行李費納入票價；0 表示不加行李費。",
+        )
+        checked_bags = col8.number_input(
+            "託運行李數",
+            min_value=0,
+            max_value=2,
+            value=config.settings.checked_bags,
+            help="依 fast-flights 3.1.0 將估算行李費納入票價；0 表示不加行李費。",
+        )
+        hide_separate = col9.checkbox(
+            "排除分開出票／自行轉機",
+            value=config.settings.hide_separate_and_self_transfer,
+        )
+        exclude_basic = col10.checkbox(
+            "排除基本經濟艙",
+            value=config.settings.exclude_basic_economy,
+        )
+
+        submitted = st.form_submit_button(
+            "搜尋",
+            type="primary",
+            use_container_width=True,
+        )
 
     st.caption(
-        "票價使用 fast-flights 免費擷取 Google Flights；擷取結果可能與 Google Flights 網頁顯示不同。"
+        "目前使用德文（de）及 EUR 對齊德國顯示。fast-flights 3.1.0 沒有 gl 國家市場參數，"
+        "Streamlit Cloud 出口位置仍可能影響結果；票價為免費擷取報價，可能與 Google Flights 網頁不同。"
     )
     st.caption(
         "往返使用同一次雙航段查詢的總價；開口價格是各段單程報價加總估算。"
@@ -490,7 +586,9 @@ def search_tab() -> None:
     )
 
     if submitted:
-        if origin == destination:
+        if cooldown_seconds:
+            st.warning("Google Flights 仍在冷卻期間，這次沒有送出查詢。")
+        elif origin == destination:
             st.warning("出發地與目的地不能相同。")
         elif trip_label != "單程" and return_date <= departure + timedelta(days=flexible):
             st.warning("回程日期必須晚於所有可能的去程日期，請調整日期或縮小彈性範圍。")
@@ -525,6 +623,10 @@ def search_tab() -> None:
                 requests,
                 seat,
                 STOP_CHOICES[stops_label],
+                int(carry_on_bags),
+                int(checked_bags),
+                hide_separate,
+                exclude_basic,
             )
             # 存進 session_state，避免側欄或下載按鈕觸發 rerun 後結果消失
             st.session_state["search_result"] = {
@@ -537,7 +639,7 @@ def search_tab() -> None:
 
     result = st.session_state.get("search_result")
     if not result:
-        st.caption("選擇航線與日期後按「搜尋」。結果會快取 30 分鐘。")
+        st.caption("選擇航線與日期後按「搜尋」。相同條件快取 5 分鐘，結果會標示來源報價時間。")
         return
 
     for message in result["errors"]:
