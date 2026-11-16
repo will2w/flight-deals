@@ -1,4 +1,4 @@
-"""AERO-RADAR // 高資訊密度專業機票雷達與雙價格矩陣表格 (app.py)"""
+"""AZEROTH FLIGHT RADAR // 燃燒遠征 (The Burning Crusade) 風格專業機票雷達 (app.py)"""
 from __future__ import annotations
 
 import json
@@ -15,8 +15,8 @@ import streamlit as st
 import yaml
 
 st.set_page_config(
-    page_title="FLIGHT DEALS RADAR // 專業機票價格雷達",
-    page_icon="✈️",
+    page_title="TBC FLIGHT RADAR // 燃燒遠征機票雷達",
+    page_icon="🟢",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -56,21 +56,97 @@ AIRPORTS: dict[str, str] = {
 }
 
 
-def inject_clean_theme() -> None:
+def inject_tbc_theme() -> None:
+    """注入魔獸世界：燃燒遠征 (TBC) 黑暗神廟深空紫、外域邪能綠與傳奇金邊框 CSS 樣式。"""
     st.markdown(
         """
         <style>
+        @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;900&family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap');
+
         .stApp {
-            background-color: #0b0f19;
-            color: #f3f4f6;
-            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+            background: radial-gradient(circle at 50% 0%, #151026 0%, #0a0712 60%, #040308 100%);
+            color: #e2e8f0;
+            font-family: 'Inter', sans-serif;
         }
-        .main-banner {
-            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-            border: 1px solid #334155;
+
+        /* TBC 燃燒遠征風格頂部橫幅 */
+        .tbc-banner {
+            background: linear-gradient(135deg, rgba(26, 15, 46, 0.9) 0%, rgba(11, 7, 20, 0.95) 100%);
+            border: 2px solid #10b981;
+            border-image: linear-gradient(to right, #059669, #10b981, #34d399) 1;
             border-radius: 8px;
-            padding: 1.2rem 1.5rem;
-            margin-bottom: 1.2rem;
+            padding: 1.4rem 1.8rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 0 35px rgba(16, 185, 129, 0.2), inset 0 0 20px rgba(0, 0, 0, 0.8);
+        }
+        .tbc-badge {
+            display: inline-block;
+            font-family: 'Cinzel', serif;
+            font-size: 0.75rem;
+            font-weight: 700;
+            letter-spacing: 0.15em;
+            color: #34d399;
+            background: rgba(16, 185, 129, 0.15);
+            border: 1px solid #10b981;
+            padding: 0.2rem 0.75rem;
+            border-radius: 4px;
+            margin-bottom: 0.4rem;
+        }
+        .tbc-title {
+            font-family: 'Cinzel', serif;
+            font-size: 2rem;
+            font-weight: 700;
+            color: #a7f3d0;
+            text-shadow: 0 2px 6px rgba(0,0,0,0.8);
+            margin: 0;
+        }
+        .tbc-subtitle {
+            font-size: 0.85rem;
+            color: #94a3b8;
+            margin-top: 0.3rem;
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        /* 數據卡片與面板 */
+        .tbc-panel {
+            background: rgba(15, 11, 26, 0.85);
+            border: 1px solid #34d399;
+            border-radius: 8px;
+            padding: 1.25rem;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+        }
+
+        /* 指標樣式：外域邪能綠光 */
+        [data-testid="stMetric"] {
+            background: linear-gradient(160deg, #111c18 0%, #0a110f 100%);
+            border: 1px solid #059669;
+            border-left: 4px solid #10b981;
+            border-radius: 6px;
+            padding: 0.8rem 1rem;
+        }
+        [data-testid="stMetricLabel"] {
+            color: #94a3b8 !important;
+            font-family: 'Cinzel', serif;
+            font-size: 0.75rem !important;
+        }
+        [data-testid="stMetricValue"] {
+            font-family: 'JetBrains Mono', monospace !important;
+            color: #34d399 !important;
+            font-weight: 700 !important;
+        }
+
+        /* 按鈕：邪能綠漸層 */
+        button[kind="primaryFormSubmit"], button[kind="primary"] {
+            background: linear-gradient(90deg, #047857 0%, #059669 50%, #10b981 100%) !important;
+            border: 1px solid #34d399 !important;
+            color: #ffffff !important;
+            font-family: 'Cinzel', serif !important;
+            font-weight: 700 !important;
+            border-radius: 6px !important;
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.4) !important;
+        }
+        button[kind="primaryFormSubmit"]:hover, button[kind="primary"]:hover {
+            box-shadow: 0 0 25px rgba(52, 211, 153, 0.7) !important;
         }
         </style>
         """,
@@ -188,7 +264,6 @@ def clean_airline_name(raw_airlines) -> str:
 
 
 def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str = "search") -> None:
-    """高資訊密度專業表格呈現：一口氣展現所有詳細資訊、雙價格與自行轉機。"""
     if df.empty:
         st.info("未偵測到符合條件的航班。")
         return
@@ -215,7 +290,6 @@ def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str =
 
     st.markdown("---")
 
-    # 建立結構化表格清單資料
     table_rows = []
     for index, row in view.iterrows():
         price = int(row["price"])
@@ -242,7 +316,6 @@ def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str =
         if has_self_transfer:
             transfer_desc += " [🔄 自行轉機]"
 
-        # 雙價格顯示格式
         price_display = f"€ {price:,} (直銷)"
         if pd.notna(ota_price) and ota_price > 0 and int(ota_price) < price:
             price_display = f"€ {price:,} (直) / € {int(ota_price):,} (OTA)"
@@ -263,12 +336,9 @@ def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str =
         })
 
     table_df = pd.DataFrame(table_rows)
-
-    # 顯示高資訊密度互動表格（隱藏內部排序數值欄位，保留乾淨介面）
     display_df = table_df.drop(columns=["直銷價(純數值)"])
     st.dataframe(display_df, use_container_width=True, hide_index=True)
 
-    # 下載按鈕
     csv_data = view.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
         "⬇ 下載完整報價矩陣 CSV",
@@ -328,7 +398,7 @@ def search_tab() -> None:
                 requests.append((tuple(segments), trip_type))
 
             rows: list[dict] = []
-            progress = st.progress(0.0, text="🛰 正在透過 Playwright 抓取 Google Flights 最便宜分頁與雙價格…")
+            progress = st.progress(0.0, text="🟢 正在通過外域邪能網路連線 Google Flights 最便宜分頁與雙價格…")
             for index, (segments, t_type) in enumerate(requests):
                 try:
                     rows.extend(
@@ -385,23 +455,68 @@ def watchlist_tab() -> None:
 
 
 def trend_tab() -> None:
+    """【燃燒遠征優化】歷史價格走勢圖表：具備統計指標卡片、乾淨的時間軸格式化與精美折線圖。"""
     history = load_history()
     if history.empty:
-        st.info("尚無歷史數據。")
+        st.info("尚無歷史觀測數據，累積數次排程後將自動繪製價格走勢。")
         return
+    if "currency" not in history.columns:
+        st.info("歷史資料格式較舊，下次排程更新後將開始記錄 EUR 走勢。")
+        return
+    history = history[history["currency"].astype(str).str.upper() == "EUR"].copy()
+    if history.empty:
+        st.info("尚無 EUR 歷史數據。")
+        return
+
+    history["航線"] = history["from_airport"] + " ➔ " + history["to_airport"]
     history["price"] = pd.to_numeric(history["price"], errors="coerce")
     history = history.dropna(subset=["price"])
-    st.line_chart(history.groupby("observed_at")["price"].min(), y_label="歷史最低票價 (EUR)", color="#38bdf8")
+    history["observed_at"] = pd.to_datetime(history["observed_at"], errors="coerce", utc=True)
+
+    # 頂部選擇器
+    col_a, col_b = st.columns(2)
+    chart_route = col_a.selectbox("選擇觀測航線 // ROUTE", sorted(history["航線"].unique()))
+    dates = sorted(history[history["航線"] == chart_route]["departure_date"].unique())
+    chart_date = col_b.selectbox("選擇出發日期 // DEPARTURE DATE", dates)
+
+    series = history[(history["航線"] == chart_route) & (history["departure_date"] == chart_date)]
+    if series.empty:
+        st.write("此日期組合尚無足夠數據。")
+        return
+
+    # 整理為乾淨的時間序列，將索引轉換為可讀的日期字串格式避免擠壓
+    lowest = series.groupby("observed_at")["price"].min().sort_index()
+    
+    # 統計指標
+    min_val = int(lowest.min())
+    max_val = int(lowest.max())
+    latest_val = int(lowest.iloc[-1])
+
+    m1, m2, m3 = st.columns(3)
+    m1.metric("歷史觀測最低價", f"€ {min_val:,}")
+    m2.metric("歷史觀測最高價", f"€ {max_val:,}")
+    m3.metric("最新回報價格", f"€ {latest_val:,}")
+
+    st.markdown("---")
+    st.subheader(f"📈 航線 {chart_route}（出發日：{chart_date}）價格走勢監控")
+    
+    # 轉換成乾淨的 DataFrame 繪製折線圖，確保橫軸完美對齊
+    chart_df = pd.DataFrame({
+        "觀測時間": lowest.index.tz_convert(ZoneInfo("Europe/Berlin")).strftime("%Y-%m-%d %H:%M"),
+        "最低票價 (EUR)": lowest.values
+    }).set_index("觀測時間")
+
+    st.line_chart(chart_df, y_label="最低票價 (EUR)", color="#10b981")
 
 
 def main() -> None:
-    inject_clean_theme()
+    inject_tbc_theme()
     st.markdown(
         """
-        <div class="main-banner">
-            <div style="font-family: monospace; font-size: 0.75rem; color: #38bdf8; font-weight: 700; margin-bottom: 0.2rem;">SYSTEM ONLINE // MARKET: DE (EUR) // DUAL-PRICE &amp; SELF-TRANSFER RADAR</div>
-            <h1 style="font-size: 1.75rem; font-weight: 700; color: #f8fafc; margin: 0;">國際航班價格雷達與雙價格分析儀</h1>
-            <div style="font-size: 0.82rem; color: #94a3b8; margin-top: 0.2rem;">Real-Time Google Flights Price Telemetry with Direct vs. OTA Pricing &amp; Self-Transfer Support</div>
+        <div class="tbc-banner">
+            <div class="tbc-badge">OUTLAND TELEMETRY // MARKET: DE (EUR) // TBC EPIC RADAR</div>
+            <h1 class="tbc-title">燃燒遠征機票雷達中樞</h1>
+            <div class="tbc-subtitle">World of Warcraft: The Burning Crusade Themed Google Flights Telemetry &amp; Dual-Price Engine</div>
         </div>
         """,
         unsafe_allow_html=True,
