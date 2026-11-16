@@ -6,15 +6,17 @@ settings:
   checked_bags: 0
   hide_separate_and_self_transfer: false
   exclude_basic_economy: false
-  top_n: 5
+  top_n: 50
   days_ahead:
-  - 14
-  - 30
-  - 60
+    - 14
+    - 30
+    - 60
   search_delay_seconds: 5
+
 routes:
-- from: FRA
-  to: HKG
+  - from: FRA
+    to: HKG
+
 deal_rules:
   below_median_pct: 30
   below_historical_min: true
