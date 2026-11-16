@@ -142,6 +142,7 @@ class GoogleFlightsProvider:
             return self._search_with_playwright(query.url(), segments, trip_type, max_stops)
 
         offers: list[Offer] = []
+        http_error_msg = ""
         try:
             results = get_flights(query)
             for item in results:
@@ -163,21 +164,19 @@ class GoogleFlightsProvider:
                 except ValueError as exc:
                     log.debug("略過未展開回程的航班結果：%s", exc)
         except Exception as exc:
-            log.warning("fast-flights 初始擷取異常 (%s)，嘗試降級或備援：%s", segments, exc)
+            http_error_msg = str(exc)
+            log.warning("fast-flights HTTP 擷取被擋 (%s)，自動切換 Playwright 備援...", http_error_msg)
 
-        # 若 fast-flights 沒有抓到任何完整結果（常見於 round-trip 需點擊展開回程，或所有低價被折疊），
-        # 自動嘗試使用 Playwright 開啟同一組 tfs+gl=DE 網址展開「其他航班」
+        # 無論是 HTTP 報錯 (no flights found; received error) 還是回傳空清單，都自動改用 Playwright 瀏覽器載入
         if not offers:
             try:
-                log.info("fast-flights 未回傳完整結果，自動切換 Playwright 展開隱藏低價...")
                 offers = self._search_with_playwright(
                     query.url(), segments, trip_type, max_stops
                 )
             except Exception as pw_exc:
-                log.warning("Playwright 自動補抓失敗：%s", pw_exc)
-
-        if not offers:
-            raise ValueError("fast-flights 沒有回傳可核對的完整航班行程（建議勾選「深度擷取」重試）。")
+                raise RuntimeError(
+                    f"HTTP 擷取失敗 ({http_error_msg or '無結果'})；Playwright 備援亦失敗 ({pw_exc})"
+                ) from pw_exc
 
         offers.sort(key=lambda o: o.price)
         return offers
