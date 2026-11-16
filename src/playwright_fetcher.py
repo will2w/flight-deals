@@ -1,4 +1,4 @@
-"""Playwright 全量深度擷取：強制切換最便宜分頁、暴力展開所有摺疊按鈕並抓出全部航班。"""
+"""Playwright 全量深度擷取：智能等待航班渲染、強制切換最便宜分頁並暴力展開所有摺疊航班。"""
 from __future__ import annotations
 
 import logging
@@ -69,7 +69,7 @@ def fetch_flights(
     scroll_count: int = DEFAULT_SCROLL_COUNT,
     headless: bool = True,
 ) -> list[PlaywrightFlight]:
-    """開啟 Google Flights 頁面、點擊最便宜分頁、展開所有摺疊區塊並抓出全部航班。"""
+    """開啟 Google Flights 頁面、通過歐洲 Consent、點擊最便宜分頁並展開全部航班。"""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
@@ -107,22 +107,40 @@ def fetch_flights(
         page = context.new_page()
 
         try:
-            page.goto(query_url, wait_until="networkidle", timeout=60000)
+            page.goto(query_url, wait_until="domcontentloaded", timeout=60000)
+            page.wait_for_timeout(2000)
+
+            # 1. 處理 Google 歐洲區 GDPR 同意頁面或彈窗
             _dismiss_consent_dialog(page)
 
-            page.wait_for_selector("li", timeout=25000)
-            page.wait_for_timeout(1500)
+            # 2. 智能等待頁面 body 中出現起降時間格式（HH:MM – HH:MM），徹底避開隱藏下拉選單的 <li>
+            try:
+                page.wait_for_function(
+                    """() => {
+                        const txt = document.body ? document.body.innerText : '';
+                        return /\\d{1,2}:\\d{2}\\s*[–\\-—]\\s*\\d{1,2}:\\d{2}/.test(txt);
+                    }""",
+                    timeout=25000,
+                )
+            except Exception:
+                page_title = page.title()
+                snippet = (page.evaluate("() => document.body ? document.body.innerText : ''") or "")[:180].replace("\n", " ")
+                raise RuntimeError(
+                    f"頁面未渲染出航班列表（可能遇到驗證或未完成跳轉）。標題：[{page_title}]，頁面摘要：[{snippet}]"
+                ) from None
 
-            # 1. 嘗試用 JS 強制點擊包含「Am günstigsten」或「Cheapest」的元素
+            page.wait_for_timeout(1200)
+
+            # 3. 強制點擊「Am günstigsten / Cheapest（最便宜）」分頁
             _force_click_cheapest_tab(page)
-            page.wait_for_timeout(1500)
+            page.wait_for_timeout(1800)
 
-            # 2. 循環捲動 + 暴力展開所有「顯示更多航班 / Weitere Flüge」按鈕直到全開
+            # 4. 循環捲動 + 暴力展開所有「顯示更多航班 / Weitere Flüge」按鈕直到全開
             prev_count = 0
             stagnant_rounds = 0
             for _ in range(scroll_count):
                 _expand_all_hidden_flights(page)
-                page.evaluate("window.scrollBy(0, 3000)")
+                page.evaluate("window.scrollBy(0, 3500)")
                 page.wait_for_timeout(DEFAULT_WAIT_MS)
                 _expand_all_hidden_flights(page)
 
@@ -162,15 +180,17 @@ def fetch_flights(
 
 
 def _dismiss_consent_dialog(page) -> None:
-    """自動關閉歐洲區 Google GDPR Cookie 同意視窗。"""
+    """自動處理 Google 歐洲區 GDPR Cookie 同意視窗或跳轉頁（consent.google.com）。"""
     try:
-        reject_btn = page.get_by_role(
-            "button",
-            name=re.compile(r"(?i)(alle ablehnen|reject all|tout refuser|全部拒絕)"),
-        )
-        if reject_btn.count() > 0 and reject_btn.first.is_visible():
-            reject_btn.first.click(timeout=3000)
-            page.wait_for_timeout(1200)
+        # 支援彈窗按鈕與全屏同意頁面的表單按鈕
+        btn = page.locator(
+            "button:has-text('Alle ablehnen'), button:has-text('Reject all'), "
+            "button:has-text('Alle akzeptieren'), button:has-text('Accept all'), "
+            "form[action*='consent'] button"
+        ).first
+        if btn.count() > 0 and btn.is_visible():
+            btn.click(timeout=4000)
+            page.wait_for_timeout(2000)
     except Exception:
         pass
 
@@ -225,7 +245,12 @@ def _expand_all_hidden_flights(page) -> None:
 
 def _count_visible_cards(page) -> int:
     try:
-        return page.locator("li").count()
+        return page.evaluate(
+            """() => {
+                const items = Array.from(document.querySelectorAll('li'));
+                return items.filter(li => !li.querySelector('li') && /\\d{1,2}:\\d{2}/.test(li.innerText || '')).length;
+            }"""
+        )
     except Exception:
         return 0
 
