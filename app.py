@@ -105,7 +105,6 @@ def inject_wow_theme() -> None:
             font-family: 'JetBrains Mono', monospace;
         }
 
-        /* 戰利品卡片樣式 */
         .wow-flight-card {
             background: linear-gradient(145deg, #131824 0%, #0b0f17 100%);
             border: 1px solid #374151;
@@ -277,8 +276,8 @@ def format_duration(minutes) -> str:
         return "—"
 
 
-def render_results_grid(df: pd.DataFrame, currency: str) -> None:
-    """專業特價導向的雙區塊魔獸卡片儀表板。"""
+def render_results_grid(df: pd.DataFrame, currency: str, key_prefix: str = "search") -> None:
+    """專業特價導向的雙區塊魔獸卡片儀表板（加入 key_prefix 避免元件衝突）。"""
     if df.empty:
         st.info("未偵測到符合條件的航班，請嘗試放寬條件。")
         return
@@ -292,7 +291,6 @@ def render_results_grid(df: pd.DataFrame, currency: str) -> None:
     direct = view[view["stops"] == 0]
     deals_df = view[view["is_deal"] == True]
 
-    # 頂部魔獸指標
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("最低直銷金幣", f"€ {int(cheapest['price']):,}")
     col2.metric("直飛首選底價", f"€ {int(direct['price'].min()):,}" if not direct.empty else "無直飛航線")
@@ -301,7 +299,6 @@ def render_results_grid(df: pd.DataFrame, currency: str) -> None:
 
     st.markdown("---")
 
-    # 【核心優化】分頁籤呈現：第一頁專門看「史詩特價」，第二頁看「所有戰利品」
     tab_deals, tab_all = st.tabs([
         f"🔥 史詩特價專區 ({len(deals_df)} 筆)",
         f"📋 全部可用戰利品 ({len(view)} 筆)"
@@ -316,10 +313,11 @@ def render_results_grid(df: pd.DataFrame, currency: str) -> None:
                 _render_wow_card(row, currency, i + 1, force_epic=True)
 
     with tab_all:
-        # 簡易過濾器
         col_f1, col_f2 = st.columns(2)
-        only_direct = col_f1.checkbox("僅顯示直飛航線 (Nonstop)", value=False)
-        max_budget = col_f2.slider("最高金幣預算 (EUR)", int(view["price"].min()), int(view["price"].max()), int(view["price"].max()), step=50)
+        only_direct = col_f1.checkbox("僅顯示直飛航線 (Nonstop)", value=False, key=f"{key_prefix}_direct")
+        min_p = int(view["price"].min())
+        max_p = int(view["price"].max())
+        max_budget = col_f2.slider("最高金幣預算 (EUR)", min_p, max_p, max_p, step=50, key=f"{key_prefix}_budget")
 
         filtered_view = view[(view["price"] <= max_budget)]
         if only_direct:
@@ -331,18 +329,18 @@ def render_results_grid(df: pd.DataFrame, currency: str) -> None:
             c_left, c_right = st.columns(2)
             with c_left:
                 if i < len(filtered_view):
-                    _render_wow_card(filtered_view.iloc.iat[i] if hasattr(filtered_view.iloc, 'iat') else filtered_view.iloc[i], currency, i + 1)
+                    _render_wow_card(filtered_view.iloc[i], currency, i + 1)
             with c_right:
                 if i + 1 < len(filtered_view):
-                    _render_wow_card(filtered_view.iloc.iat[i+1] if hasattr(filtered_view.iloc, 'iat') else filtered_view.iloc[i+1], currency, i + 2)
+                    _render_wow_card(filtered_view.iloc[i + 1], currency, i + 2)
 
-    # 匯出按鈕
     csv_data = view.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
         "⬇ 下載完整戰利品矩陣 CSV",
         data=csv_data,
         file_name=f"azeroth-radar_{cheapest['from_airport']}-{cheapest['to_airport']}.csv",
         mime="text/csv",
+        key=f"{key_prefix}_download",
     )
 
 
@@ -501,7 +499,7 @@ def search_tab() -> None:
         return
 
     df = mark_deals(result["rows"])
-    render_results_grid(df, config.settings.currency)
+    render_results_grid(df, config.settings.currency, key_prefix="search")
 
 
 def watchlist_tab() -> None:
@@ -514,7 +512,7 @@ def watchlist_tab() -> None:
         st.info("尚無監控戰利品。")
         return
     currency = snapshot.get("currency", "EUR")
-    render_results_grid(offers_df, currency)
+    render_results_grid(offers_df, currency, key_prefix="watch")
 
 
 def trend_tab() -> None:
