@@ -1,4 +1,4 @@
-"""Playwright 深度擷取：模擬瀏覽器切換「價格從低到高」排序並展開所有低價結果。"""
+"""Playwright 深度擷取：自動切換 Google Flights「Am günstigsten（最便宜）」頁籤與價格排序。"""
 from __future__ import annotations
 
 import logging
@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MAX_RESULTS = 60
+DEFAULT_MAX_RESULTS = 80
 DEFAULT_SCROLL_COUNT = 15
 DEFAULT_WAIT_MS = 1200
 
@@ -69,7 +69,7 @@ def fetch_flights(
     scroll_count: int = DEFAULT_SCROLL_COUNT,
     headless: bool = True,
 ) -> list[PlaywrightFlight]:
-    """開啟 Google Flights 頁面、切換為「價格從低到高」排序、展開摺疊航班並解析。"""
+    """開啟 Google Flights 頁面、點擊「Am günstigsten（最便宜）」頁籤、展開所有摺疊航班並解析。"""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
@@ -114,10 +114,13 @@ def fetch_flights(
             page.wait_for_selector("li", timeout=25000)
             page.wait_for_timeout(1500)
 
-            # 關鍵步驟：將 Google Flights 預設排序從「最佳航班」切換為「價格（從低到高）」
-            _sort_by_price(page)
+            # 1. 關鍵步驟：點擊上方「Am günstigsten / Cheapest（最便宜）」頁籤
+            _switch_to_cheapest_tab(page)
 
-            # 展開所有摺疊的「顯示更多航班」
+            # 2. 確保右側排序為「Nach Preis sortiert / Sorted by price」
+            _ensure_sorted_by_price(page)
+
+            # 3. 展開所有摺疊的「顯示更多航班」
             _click_show_more(page)
 
             prev_count = 0
@@ -135,7 +138,7 @@ def fetch_flights(
                 else:
                     stagnant_rounds = 0
                 prev_count = current
-                if current >= max_results * 2:
+                if current >= max_results * 3:
                     break
 
             cards = page.query_selector_all("li")
@@ -176,19 +179,46 @@ def _dismiss_consent_dialog(page) -> None:
         pass
 
 
-def _sort_by_price(page) -> None:
-    """點擊 Google Flights 的排序選單，切換為「Preis / Price（價格從低到高）」。"""
+def _switch_to_cheapest_tab(page) -> None:
+    """點擊 Google Flights 頂部的「Am günstigsten / Cheapest（最便宜）」分頁籤。"""
+    pattern = re.compile(r"(?i)(am günstigsten|cheapest|最便宜)")
     try:
-        # 尋找「Sortieren nach / Sort by / 排序依據」按鈕
+        # 優先尋找 role="tab" 的分頁元件
+        tab = page.get_by_role("tab", name=pattern)
+        if tab.count() > 0 and tab.first.is_visible():
+            tab.first.click(timeout=3000)
+            page.wait_for_timeout(1800)
+            log.info("已點擊「Am günstigsten（最便宜）」頁籤。")
+            return
+
+        # 備援：直接尋找包含「Am günstigsten」的可點擊元素
+        fallback = page.get_by_text(pattern)
+        if fallback.count() > 0 and fallback.first.is_visible():
+            fallback.first.click(timeout=3000)
+            page.wait_for_timeout(1800)
+            log.info("已透過文字定位點擊「Am günstigsten（最便宜）」頁籤。")
+    except Exception as exc:
+        log.debug("點擊 Am günstigsten 頁籤時略過：%s", exc)
+
+
+def _ensure_sorted_by_price(page) -> None:
+    """確認列表已按價格排序（Nach Preis sortiert），若否則手動切換。"""
+    try:
+        # 若畫面上已經顯示「Nach Preis sortiert」或「Sorted by price」，代表已按價格排序
+        already_sorted = page.get_by_text(
+            re.compile(r"(?i)(nach preis sortiert|sorted by price|已按價格排序)")
+        )
+        if already_sorted.count() > 0 and already_sorted.first.is_visible():
+            return
+
         sort_btn = page.get_by_role(
             "button",
-            name=re.compile(r"(?i)(sortieren|sort by|排序|beste flüge|top flights)"),
+            name=re.compile(r"(?i)(sortieren|sort by|排序)"),
         )
         if sort_btn.count() > 0 and sort_btn.first.is_visible():
             sort_btn.first.click(timeout=3000)
             page.wait_for_timeout(800)
 
-            # 在彈出選單中點選「Preis / Price / 價格」
             price_option = page.get_by_role(
                 "menuitemradio",
                 name=re.compile(r"(?i)^(preis|price|價格|价格)$"),
@@ -200,7 +230,6 @@ def _sort_by_price(page) -> None:
             if price_option.count() > 0 and price_option.first.is_visible():
                 price_option.first.click(timeout=3000)
                 page.wait_for_timeout(1800)
-                log.info("已成功切換 Google Flights 排序為「價格從低到高」。")
     except Exception as exc:
         log.debug("切換價格排序時略過：%s", exc)
 
@@ -211,7 +240,7 @@ def _click_show_more(page) -> None:
         buttons = page.get_by_role(
             "button",
             name=re.compile(
-                r"(?i)(weitere flüge|mehr flüge|more flights|show more|顯示更多|更多航班)"
+                r"(?i)(weitere flüge|mehr flüge|more flights|show more|günstigere|cheaper|顯示更多|更多航班)"
             ),
         )
         for btn in buttons.all():
@@ -230,12 +259,14 @@ def _count_visible_cards(page) -> int:
 
 
 def _parse_card(card) -> PlaywrightFlight | None:
-    """從單一航班卡片 DOM 提取資訊（嚴格過濾非航班卡片的雜訊 <li>）。"""
+    """從單一航班卡片 DOM 提取資訊（排除包含多張子卡片的外層容器 <li>）。"""
+    if card.query_selector("li") is not None:
+        return None
+
     text = card.inner_text() or ""
     if not text.strip():
         return None
 
-    # 真正的航班卡片一定包含起降時間（HH:MM – HH:MM），藉此過濾掉側欄與日期價格網格
     times = re.findall(r"(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})", text)
     if not times:
         return None
@@ -250,17 +281,14 @@ def _parse_card(card) -> PlaywrightFlight | None:
         arrival_time=times[0][1],
     )
 
-    # 轉機次數
     stops_match = re.search(r"(\d+)\s*(Stop|Stopp|停)", text, re.IGNORECASE)
     if stops_match:
         flight.stops = int(stops_match.group(1))
     elif re.search(r"(?i)(nonstop|direkt|直飛|直航)", text):
         flight.stops = 0
 
-    # 時長：例如 "16 Std. 45 Min" 或 "16h 45m"
     flight.duration_minutes = _extract_duration(text)
 
-    # 機場代碼（三碼）
     airport_codes = re.findall(r"\b([A-Z]{3})\b", text)
     airport_codes = [c for c in airport_codes if c not in {"EUR", "USD", "GBP", "TWD", "HKD"}]
     if len(airport_codes) >= 2:
@@ -270,12 +298,12 @@ def _parse_card(card) -> PlaywrightFlight | None:
             flight.transfer_airports = list(dict.fromkeys(airport_codes[1:-1]))
 
     flight.airlines = _extract_airlines(card, text)
-    flight.is_best = bool(re.search(r"(?i)(best|beste|最佳)", text))
+    flight.is_best = bool(re.search(r"(?i)(beste flüge|top flights|最佳航班)", text))
     return flight
 
 
 def _extract_price(text: str) -> int | None:
-    """從卡片文字中提取最低有效票價（避免抓到劃線原價或碳排數字）。"""
+    """從卡片文字中提取最低有效票價。"""
     patterns = [
         r"€\s*([\d.]+)",
         r"([\d.]+)\s*€",
@@ -312,34 +340,43 @@ def _extract_duration(text: str) -> int:
 
 
 def _extract_airlines(card, text: str) -> list[str]:
-    """從卡片中提取航空公司名稱。"""
+    """從單張航班卡片中提取航空公司名稱（支援「Eigener Transfer · Pegasus, AJet, China Eastern」格式）。"""
     airlines: list[str] = []
-    try:
-        imgs = card.query_selector_all("img")
-        for img in imgs:
-            label = img.get_attribute("aria-label") or img.get_attribute("alt") or ""
-            if label and len(label) < 60:
-                airlines.append(label.strip())
-    except Exception:
-        pass
 
+    # 1. 逐行掃描文字，精準解析航司行（過濾掉「Eigener Transfer / Self-transfer」標籤）
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for line in lines:
+        if re.search(r"(€|EUR|\d{1,2}:\d{2}|Std\.|Min\.|CO2|Stopp|Nonstop|Flughafenwechsel)", line):
+            continue
+        # 移除「Eigener Transfer · 」或「Self-transfer · 」前綴
+        cleaned_line = re.sub(
+            r"(?i)^(eigener transfer|self-transfer|separates ticket|separate tickets)\s*[·•\-]\s*",
+            "",
+            line,
+        ).strip()
+        if not cleaned_line or cleaned_line.lower() in {"eigener transfer", "self-transfer"}:
+            continue
+        if 2 <= len(cleaned_line) <= 75:
+            for part in re.split(r"[,、·•]", cleaned_line):
+                part_clean = part.strip().rstrip(".")
+                if (
+                    part_clean
+                    and not part_clean.isupper()
+                    and part_clean.lower() not in {"eigener transfer", "self-transfer"}
+                ):
+                    airlines.append(part_clean)
+            if airlines:
+                break
+
+    # 2. 若文字行未抓到，退回抓 <img> 的 aria-label / alt
     if not airlines:
-        known_airlines = [
-            "Lufthansa", "Cathay Pacific", "Cathay", "Turkish Airlines", "Turkish",
-            "Emirates", "Qatar Airways", "Qatar", "Etihad", "Singapore Airlines",
-            "Singapore", "Air China", "Air France", "KLM", "British Airways",
-            "Swiss", "Austrian", "ANA", "All Nippon", "Japan Airlines", "JAL",
-            "Korean Air", "Asiana", "Thai Airways", "Thai", "Vietnam Airlines",
-            "Vietnam", "Malaysia Airlines", "Malaysia", "EVA Air", "EVA",
-            "China Airlines", "Hainan", "XiamenAir", "Xiamen", "United",
-            "American Airlines", "American", "Delta", "Air Canada", "Finnair",
-            "SAS", "Norwegian", "Ryanair", "EasyJet", "Wizz Air", "Wizz",
-            "Aegean", "ITA Airways", "ITA", "Iberia", "TAP",
-            "Saudia", "Gulf Air", "Royal Jordanian", "EgyptAir",
-            "Ethiopian", "Scoot", "AirAsia", "Peach", "Jetstar", "Tigerair",
-            "Starlux", "Juneyao", "Spring Airlines", "China Eastern", "China Southern",
-        ]
-        for name in known_airlines:
-            if re.search(re.escape(name), text, re.IGNORECASE):
-                airlines.append(name)
+        try:
+            imgs = card.query_selector_all("img")
+            for img in imgs:
+                label = img.get_attribute("aria-label") or img.get_attribute("alt") or ""
+                if label and len(label) < 60:
+                    airlines.append(label.strip())
+        except Exception:
+            pass
+
     return list(dict.fromkeys(airlines))
