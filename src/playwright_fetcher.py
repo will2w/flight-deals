@@ -1,4 +1,4 @@
-"""Playwright 深度擷取：模擬瀏覽器捲動與展開「更多航班」以取得所有隱藏低價結果。"""
+"""Playwright 深度擷取：模擬瀏覽器切換「價格從低到高」排序並展開所有低價結果。"""
 from __future__ import annotations
 
 import logging
@@ -69,7 +69,7 @@ def fetch_flights(
     scroll_count: int = DEFAULT_SCROLL_COUNT,
     headless: bool = True,
 ) -> list[PlaywrightFlight]:
-    """開啟 Google Flights 頁面、處理歐洲 Cookie 視窗、展開所有摺疊航班並解析。"""
+    """開啟 Google Flights 頁面、切換為「價格從低到高」排序、展開摺疊航班並解析。"""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
@@ -110,9 +110,14 @@ def fetch_flights(
             page.goto(query_url, wait_until="domcontentloaded", timeout=60000)
             _dismiss_consent_dialog(page)
 
-            # 等待包含價格與時間的航班列表載入
+            # 等待初始航班列表載入
             page.wait_for_selector("li", timeout=25000)
             page.wait_for_timeout(1500)
+
+            # 關鍵步驟：將 Google Flights 預設排序從「最佳航班」切換為「價格（從低到高）」
+            _sort_by_price(page)
+
+            # 展開所有摺疊的「顯示更多航班」
             _click_show_more(page)
 
             prev_count = 0
@@ -169,6 +174,35 @@ def _dismiss_consent_dialog(page) -> None:
             page.wait_for_timeout(1200)
     except Exception:
         pass
+
+
+def _sort_by_price(page) -> None:
+    """點擊 Google Flights 的排序選單，切換為「Preis / Price（價格從低到高）」。"""
+    try:
+        # 尋找「Sortieren nach / Sort by / 排序依據」按鈕
+        sort_btn = page.get_by_role(
+            "button",
+            name=re.compile(r"(?i)(sortieren|sort by|排序|beste flüge|top flights)"),
+        )
+        if sort_btn.count() > 0 and sort_btn.first.is_visible():
+            sort_btn.first.click(timeout=3000)
+            page.wait_for_timeout(800)
+
+            # 在彈出選單中點選「Preis / Price / 價格」
+            price_option = page.get_by_role(
+                "menuitemradio",
+                name=re.compile(r"(?i)^(preis|price|價格|价格)$"),
+            )
+            if price_option.count() == 0:
+                price_option = page.get_by_text(
+                    re.compile(r"(?i)^(preis|price|價格|价格)$")
+                )
+            if price_option.count() > 0 and price_option.first.is_visible():
+                price_option.first.click(timeout=3000)
+                page.wait_for_timeout(1800)
+                log.info("已成功切換 Google Flights 排序為「價格從低到高」。")
+    except Exception as exc:
+        log.debug("切換價格排序時略過：%s", exc)
 
 
 def _click_show_more(page) -> None:
@@ -228,7 +262,6 @@ def _parse_card(card) -> PlaywrightFlight | None:
 
     # 機場代碼（三碼）
     airport_codes = re.findall(r"\b([A-Z]{3})\b", text)
-    # 排除幣別代碼 EUR / USD
     airport_codes = [c for c in airport_codes if c not in {"EUR", "USD", "GBP", "TWD", "HKD"}]
     if len(airport_codes) >= 2:
         flight.from_airport = airport_codes[0]
@@ -256,7 +289,7 @@ def _extract_price(text: str) -> int | None:
             cleaned = m.replace(".", "").strip()
             if cleaned.isdigit():
                 val = int(cleaned)
-                if val >= 10:  # 過濾掉異常極小值
+                if val >= 10:
                     values.append(val)
     return min(values) if values else None
 
