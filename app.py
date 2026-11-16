@@ -1,4 +1,4 @@
-"""AZEROTH FLIGHT RADAR // 燃燒遠征全球機場完整版與左右分欄戰情室 (app.py)"""
+"""QUEL'THALAS FLIGHT RADAR // 血精靈風格全球機場與左右分欄雙戰情室 (app.py)"""
 from __future__ import annotations
 
 import json
@@ -15,8 +15,8 @@ import streamlit as st
 import yaml
 
 st.set_page_config(
-    page_title="TBC FLIGHT RADAR // 燃燒遠征機票雷達",
-    page_icon="🟢",
+    page_title="QUEL'THALAS FLIGHT RADAR // 血精靈機票雷達",
+    page_icon="🩸",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -43,93 +43,85 @@ SEAT_LABELS = {
 
 STOP_CHOICES = {"不限航段": None, "只要直飛 (Nonstop)": 0, "最多轉 1 次": 1}
 
-# 基礎熱門機場對照，後續會透過 airportsdata 自動擴充全球完整機場
-AIRPORTS: dict[str, str] = {
-    "TPE": "台北 桃園", "TSA": "台北 松山", "KHH": "高雄", "RMQ": "台中",
-    "NRT": "東京 成田", "HND": "東京 羽田", "KIX": "大阪 關西", "ICN": "首爾 仁川",
-    "HKG": "香港", "PVG": "上海 浦東", "PEK": "北京 首都", "CAN": "廣州", "SZX": "深圳",
-    "BKK": "曼谷 蘇凡納布", "SIN": "新加坡", "KUL": "吉隆坡", "MNL": "馬尼拉",
-    "DXB": "杜拜", "DOH": "杜哈", "IST": "伊斯坦堡",
-    "DUS": "杜塞道夫", "FRA": "法蘭克福", "MUC": "慕尼黑", "BER": "柏林",
-    "AMS": "阿姆斯特丹", "CDG": "巴黎 戴高樂", "LHR": "倫敦 希斯洛",
-    "FCO": "羅馬", "MXP": "米蘭", "PRG": "布拉格", "VIE": "維也納",
-    "LAX": "洛杉磯", "SFO": "舊金山", "JFK": "紐約 甘迺迪", "YVR": "溫哥華",
-}
 
-
-def inject_tbc_theme() -> None:
+def inject_blood_elf_theme() -> None:
+    """注入血精靈（Blood Elf）太陽之井金紅奢華風格 CSS 樣式。"""
     st.markdown(
         """
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Cinzel:wght@600;700;900&family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
         .stApp {
-            background: radial-gradient(circle at 50% 0%, #151026 0%, #0a0712 60%, #040308 100%);
-            color: #e2e8f0;
+            background: radial-gradient(circle at 50% 0%, #1f0b14 0%, #0d0408 60%, #050203 100%);
+            color: #f3e8ff;
             font-family: 'Inter', sans-serif;
         }
 
-        .tbc-banner {
-            background: linear-gradient(135deg, rgba(26, 15, 46, 0.9) 0%, rgba(11, 7, 20, 0.95) 100%);
-            border: 2px solid #10b981;
-            border-image: linear-gradient(to right, #059669, #10b981, #34d399) 1;
+        .blood-elf-banner {
+            background: linear-gradient(135deg, rgba(50, 10, 22, 0.9) 0%, rgba(20, 5, 10, 0.95) 100%);
+            border: 2px solid #f59e0b;
+            border-image: linear-gradient(to right, #b91c1c, #f59e0b, #ef4444) 1;
             border-radius: 8px;
             padding: 1.2rem 1.6rem;
             margin-bottom: 1.2rem;
-            box-shadow: 0 0 30px rgba(16, 185, 129, 0.2);
+            box-shadow: 0 0 35px rgba(220, 38, 38, 0.25), inset 0 0 20px rgba(0, 0, 0, 0.8);
         }
-        .tbc-badge {
+        .blood-elf-badge {
             display: inline-block;
             font-family: 'Cinzel', serif;
             font-size: 0.72rem;
             font-weight: 700;
             letter-spacing: 0.15em;
-            color: #34d399;
-            background: rgba(16, 185, 129, 0.15);
-            border: 1px solid #10b981;
+            color: #fde047;
+            background: rgba(185, 28, 28, 0.25);
+            border: 1px solid #f59e0b;
             padding: 0.15rem 0.6rem;
             border-radius: 4px;
             margin-bottom: 0.3rem;
         }
-        .tbc-title {
+        .blood-elf-title {
             font-family: 'Cinzel', serif;
             font-size: 1.8rem;
             font-weight: 700;
-            color: #a7f3d0;
+            color: #fef08a;
+            text-shadow: 0 2px 4px rgba(0,0,0,0.9);
             margin: 0;
         }
-        .tbc-subtitle {
+        .blood-elf-subtitle {
             font-size: 0.8rem;
-            color: #94a3b8;
+            color: #cbd5e1;
             margin-top: 0.3rem;
             font-family: 'JetBrains Mono', monospace;
         }
 
         [data-testid="stMetric"] {
-            background: linear-gradient(160deg, #111c18 0%, #0a110f 100%);
-            border: 1px solid #059669;
-            border-left: 4px solid #10b981;
+            background: linear-gradient(160deg, #230d14 0%, #100508 100%);
+            border: 1px solid #b91c1c;
+            border-left: 4px solid #f59e0b;
             border-radius: 6px;
             padding: 0.7rem 0.9rem;
         }
         [data-testid="stMetricLabel"] {
-            color: #94a3b8 !important;
+            color: #cbd5e1 !important;
             font-family: 'Cinzel', serif;
             font-size: 0.7rem !important;
         }
         [data-testid="stMetricValue"] {
             font-family: 'JetBrains Mono', monospace !important;
-            color: #34d399 !important;
+            color: #fde047 !important;
             font-weight: 700 !important;
         }
         button[kind="primaryFormSubmit"], button[kind="primary"] {
-            background: linear-gradient(90deg, #047857 0%, #059669 50%, #10b981 100%) !important;
-            border: 1px solid #34d399 !important;
+            background: linear-gradient(90deg, #991b1b 0%, #b91c1c 50%, #dc2626 100%) !important;
+            border: 1px solid #f59e0b !important;
             color: #ffffff !important;
             font-family: 'Cinzel', serif !important;
             font-weight: 700 !important;
             border-radius: 6px !important;
-            box-shadow: 0 0 15px rgba(16, 185, 129, 0.4) !important;
+            box-shadow: 0 0 15px rgba(245, 158, 11, 0.4) !important;
+        }
+        button[kind="primaryFormSubmit"]:hover, button[kind="primary"]:hover {
+            box-shadow: 0 0 25px rgba(245, 158, 11, 0.7) !important;
         }
         </style>
         """,
@@ -138,24 +130,26 @@ def inject_tbc_theme() -> None:
 
 
 @st.cache_data
-def load_iata_airports() -> dict:
+def load_all_airports() -> dict[str, str]:
     """自動從 airportsdata 套件載入全球完整 IATA 機場資料庫。"""
+    airports_dict = {}
     try:
-        return airportsdata.load("IATA")
+        raw_data = airportsdata.load("IATA")
+        for code, airport in raw_data.items():
+            if len(code) != 3:
+                continue
+            name_parts = [
+                str(airport.get(field, "")).strip()
+                for field in ("city", "name", "country")
+                if airport.get(field)
+            ]
+            airports_dict[code] = " · ".join(name_parts) or code
     except Exception:
-        return {}
+        airports_dict = {"FRA": "Frankfurt · Frankfurt am Main · Germany", "HKG": "Hong Kong · Hong Kong International Airport · Hong Kong"}
+    return airports_dict
 
 
-# 動態將全球完整機場資料庫補全至 AIRPORTS 字典中
-for airport_code, airport in load_iata_airports().items():
-    if len(airport_code) != 3:
-        continue
-    airport_name = " · ".join(
-        str(airport.get(field, "")).strip()
-        for field in ("city", "name", "country")
-        if airport.get(field)
-    )
-    AIRPORTS.setdefault(airport_code, airport_name or airport_code)
+AIRPORTS = load_all_airports()
 
 
 def airport_label(code: str) -> str:
@@ -338,16 +332,16 @@ def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str =
 
 
 def search_tab() -> None:
-    """【左右分欄設計】左側戰術控制面板，右側即時戰利品展示。"""
+    """【左右分欄設計】左側血精靈控制面板，右側即時戰利品展示。"""
     config = load_config()
     codes = list(AIRPORTS)
-    default_origin = codes.index("FRA") if "FRA" in codes else 0
-    default_dest = codes.index("HKG") if "HKG" in codes else 1
+    default_origin = codes.index("FRA") if "FRA" in codes else (0 if codes else "")
+    default_dest = codes.index("HKG") if "HKG" in codes else (1 if len(codes) > 1 else 0)
 
     col_left, col_right = st.columns([0.35, 0.65], gap="large")
 
     with col_left:
-        st.markdown("### 🎛️ 戰術雷達控制面板")
+        st.markdown("### 🎛️ 太陽之井雷達控制面板")
         with st.form("search_form"):
             trip_label = st.radio(
                 "航程模式 // ITINERARY MODE",
@@ -371,7 +365,7 @@ def search_tab() -> None:
                 carry_on_bags = st.number_input("隨身行李數", min_value=0, max_value=2, value=0)
                 checked_bags = st.number_input("託運行李數", min_value=0, max_value=2, value=0)
 
-            submitted = st.form_submit_button("🚀 啟動即時航班價格雷達", type="primary", use_container_width=True)
+            submitted = st.form_submit_button("🩸 啟動奎爾薩拉斯即時雷達", type="primary", use_container_width=True)
 
     with col_right:
         st.markdown("### 📊 航班戰利品即時展示區")
@@ -389,7 +383,7 @@ def search_tab() -> None:
                     requests.append((tuple(segments), trip_type))
 
                 rows: list[dict] = []
-                progress = st.progress(0.0, text="🟢 正在通過外域邪能網路連線 Google Flights 最便宜分頁與雙價格…")
+                progress = st.progress(0.0, text="🩸 正在透過太陽之井魔網連線 Google Flights 最便宜分頁與雙價格…")
                 for index, (segments, t_type) in enumerate(requests):
                     try:
                         rows.extend(
@@ -421,7 +415,7 @@ def search_tab() -> None:
 
         result = st.session_state.get("search_result")
         if not result:
-            st.info("👈 請在左側設定航線與條件，點擊 **「啟動即時航班價格雷達」** 開始檢索。")
+            st.info("👈 請在左側設定航線與條件，點擊 **「啟動奎爾薩拉斯即時雷達」** 開始檢索。")
         else:
             if not result["rows"]:
                 st.error("本次查詢未取得任何有效票價，請稍後重試。")
@@ -431,7 +425,7 @@ def search_tab() -> None:
 
 
 def watchlist_tab() -> None:
-    """多航線戰術戰情室：動態新增與刪除全球機場監控航線。"""
+    """【左右分欄設計】左側血精靈控制面板管理航線，右側戰情室即時聚合展示。"""
     config = load_config()
     codes = list(AIRPORTS)
     
@@ -442,80 +436,79 @@ def watchlist_tab() -> None:
         ]
     routes = st.session_state["watch_routes"]
 
-    st.subheader("🛡️ 多航線戰術戰情室（航線監控管理）")
-    st.caption("在此自由添加或刪除監控航線，系統將自動同步並透過 GitHub Actions 守衛排程。")
+    col_left, col_right = st.columns([0.35, 0.65], gap="large")
 
-    with st.form("add_watchlist_form"):
-        c1, c2, c3 = st.columns([2, 2, 1])
-        new_origin = c1.selectbox("出發要塞 ORIGIN", codes, format_func=airport_label, key="add_origin")
-        new_destination = c2.selectbox("目標領地 DESTINATION", codes, index=1 if len(codes) > 1 else 0, format_func=airport_label, key="add_dest")
-        add_btn = c3.form_submit_button("＋ 添加航線", use_container_width=True)
-
-    if add_btn:
-        if new_origin == new_destination:
-            st.warning("出發地與目的地不能相同。")
-        elif any(r["from"] == new_origin and r["to"] == new_destination for r in routes):
-            st.info("此航線已在防禦陣列中。")
-        else:
-            routes.append({"from": new_origin, "to": new_destination})
-            st.session_state["watch_routes"] = routes
-            st.success(f"成功添加航線：{new_origin} ➔ {new_destination}")
-            st.rerun()
-
-    if routes:
-        route_labels = [f"{r['from']} ➔ {r['to']}" for r in routes]
-        st.markdown("#### 📋 目前監控陣列清單")
+    with col_left:
+        st.markdown("### 🛡️ 銀月城防禦陣列控制面板")
         
-        col_del_1, col_del_2 = st.columns([3, 1])
-        selected_to_remove = col_del_1.selectbox("選擇要移除的航線", route_labels, key="remove_select")
-        if col_del_2.button("🗑️ 刪除所選航線", use_container_width=True):
-            idx = route_labels.index(selected_to_remove)
-            removed = routes.pop(idx)
-            st.session_state["watch_routes"] = routes
-            st.warning(f"已移除航線：{removed['from']} ➔ {removed['to']}")
-            st.rerun()
+        with st.form("add_watchlist_form"):
+            new_origin = st.selectbox("出發要塞 ORIGIN", codes, format_func=airport_label, key="add_origin")
+            new_destination = st.selectbox("目標領地 DESTINATION", codes, index=1 if len(codes) > 1 else 0, format_func=airport_label, key="add_dest")
+            add_btn = st.form_submit_button("＋ 添加監控航線", use_container_width=True)
 
-        token = read_secret("GITHUB_TOKEN")
-        repository = read_secret("GITHUB_REPOSITORY")
-        branch = read_secret("GITHUB_BRANCH", "main")
-        
-        if st.button("☁️ 同步航線至 GitHub 排程倉庫", type="primary"):
-            if not token or not repository:
-                st.error("尚未設定 GitHub Secrets (GITHUB_TOKEN 與 GITHUB_REPOSITORY)。")
+        if add_btn:
+            if new_origin == new_destination:
+                st.warning("出發地與目的地不能相同。")
+            elif any(r["from"] == new_origin and r["to"] == new_destination for r in routes):
+                st.info("此航線已在防禦陣列中。")
             else:
-                try:
-                    config_data = yaml.safe_load((ROOT / "config" / "routes.yaml").read_text(encoding="utf-8")) or {}
-                    config_data["routes"] = routes
-                    commit_url = update_routes(repository, branch, token, routes)
-                    st.success("航線設定已成功同步至 GitHub！")
-                    if commit_url:
-                        st.link_button("檢視 GitHub Commit 紀錄", commit_url)
-                except Exception as exc:
-                    st.error(f"同步失敗：{exc}")
-    else:
-        st.info("目前無監控航線，請在上方新增。")
+                routes.append({"from": new_origin, "to": new_destination})
+                st.session_state["watch_routes"] = routes
+                st.success(f"成功添加航線：{new_origin} ➔ {new_destination}")
+                st.rerun()
 
-    st.markdown("---")
-    
-    snapshot = load_snapshot()
-    if snapshot is None:
-        st.info("尚未產生排程快照數據。")
-        return
+        st.markdown("---")
+        st.markdown("#### 📋 既有監控陣列管理")
+        if routes:
+            route_labels = [f"{r['from']} ➔ {r['to']}" for r in routes]
+            selected_to_remove = st.selectbox("選擇要移除的航線", route_labels, key="remove_select")
+            if st.button("🗑️ 刪除所選航線", use_container_width=True):
+                idx = route_labels.index(selected_to_remove)
+                removed = routes.pop(idx)
+                st.session_state["watch_routes"] = routes
+                st.warning(f"已移除航線：{removed['from']} ➔ {removed['to']}")
+                st.rerun()
+
+            token = read_secret("GITHUB_TOKEN")
+            repository = read_secret("GITHUB_REPOSITORY")
+            branch = read_secret("GITHUB_BRANCH", "main")
+            
+            if st.button("☁️ 同步航線至 GitHub 排程倉庫", type="primary", use_container_width=True):
+                if not token or not repository:
+                    st.error("尚未設定 GitHub Secrets。")
+                else:
+                    try:
+                        config_data = yaml.safe_load((ROOT / "config" / "routes.yaml").read_text(encoding="utf-8")) or {}
+                        config_data["routes"] = routes
+                        commit_url = update_routes(repository, branch, token, routes)
+                        st.success("航線設定已成功同步至 GitHub！")
+                        if commit_url:
+                            st.link_button("檢視 GitHub Commit 紀錄", commit_url)
+                    except Exception as exc:
+                        st.error(f"同步失敗：{exc}")
+        else:
+            st.info("目前無監控航線。")
+
+    with col_right:
+        st.markdown("### 📊 戰情室聚合報價展示區")
+        snapshot = load_snapshot()
+        if snapshot is None:
+            st.info("尚未產生排程快照數據。")
+            return
+            
+        offers_df = pd.DataFrame(snapshot.get("offers", []))
+        if offers_df.empty:
+            st.info("尚無監控報價戰利品。")
+            return
+
+        currency = snapshot.get("currency", "EUR")
+        offers_df["航線"] = offers_df["from_airport"] + " ➔ " + offers_df["to_airport"]
+        available_routes = sorted(offers_df["航線"].unique())
         
-    offers_df = pd.DataFrame(snapshot.get("offers", []))
-    if offers_df.empty:
-        st.info("尚無監控報價戰利品。")
-        return
+        selected_route_filter = st.selectbox("🎯 篩選檢視指定監控航線報價", ["全部顯示 (All Routes)"] + available_routes)
+        filtered_watchlist = offers_df if selected_route_filter == "全部顯示 (All Routes)" else offers_df[offers_df["航線"] == selected_route_filter]
 
-    currency = snapshot.get("currency", "EUR")
-    offers_df["航線"] = offers_df["from_airport"] + " ➔ " + offers_df["to_airport"]
-    available_routes = sorted(offers_df["航線"].unique())
-    
-    selected_route_filter = st.selectbox("🎯 篩選檢視指定監控航線報價", ["全部顯示 (All Routes)"] + available_routes)
-    filtered_watchlist = offers_df if selected_route_filter == "全部顯示 (All Routes)" else offers_df[offers_df["航線"] == selected_route_filter]
-
-    st.markdown(f"### ⚔️ 戰情室聚合報價清單（共 {len(filtered_watchlist)} 筆）")
-    render_professional_table(filtered_watchlist, currency, key_prefix="watch")
+        render_professional_table(filtered_watchlist, currency, key_prefix="watch")
 
 
 def trend_tab() -> None:
@@ -565,7 +558,7 @@ def trend_tab() -> None:
         "最低票價 (EUR)": lowest.values
     }).set_index("觀測時間")
 
-    st.line_chart(chart_df, y_label="最低票價 (EUR)", color="#10b981")
+    st.line_chart(chart_df, y_label="最低票價 (EUR)", color="#f59e0b")
 
 
 def read_secret(name: str, default: str = "") -> str:
@@ -577,13 +570,13 @@ def read_secret(name: str, default: str = "") -> str:
 
 
 def main() -> None:
-    inject_tbc_theme()
+    inject_blood_elf_theme()
     st.markdown(
         """
-        <div class="tbc-banner">
-            <div class="tbc-badge">OUTLAND TELEMETRY // MARKET: DE (EUR) // TBC EPIC RADAR</div>
-            <h1 class="tbc-title">燃燒遠征機票雷達中樞</h1>
-            <div class="tbc-subtitle">World of Warcraft: The Burning Crusade Themed Google Flights Telemetry &amp; Dual-Price Engine</div>
+        <div class="blood-elf-banner">
+            <div class="blood-elf-badge">QUEL'THALAS TELEMETRY // MARKET: DE (EUR) // BLOOD ELF EPIC RADAR</div>
+            <h1 class="blood-elf-title">血精靈機票雷達中樞</h1>
+            <div class="blood-elf-subtitle">World of Warcraft: Blood Elf Themed Google Flights Telemetry &amp; Dual-Price Engine</div>
         </div>
         """,
         unsafe_allow_html=True,
