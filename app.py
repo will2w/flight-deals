@@ -1,4 +1,4 @@
-"""AERO-RADAR // 魔獸世界風格特價機票雷達（智能保底特價與極致精簡版 app.py）"""
+"""AERO-RADAR // 高效專業機票價格雷達與雙價格矩陣 (app.py)"""
 from __future__ import annotations
 
 import json
@@ -15,8 +15,8 @@ import streamlit as st
 import yaml
 
 st.set_page_config(
-    page_title="AZEROTH FLIGHT RADAR // 艾澤拉斯特價機票雷達",
-    page_icon="🛡️",
+    page_title="FLIGHT DEALS RADAR // 專業機票價格雷達",
+    page_icon="✈️",
     layout="wide",
     initial_sidebar_state="collapsed",
 )
@@ -35,10 +35,10 @@ SNAPSHOT_PATH = ROOT / "data" / "deals.json"
 HISTORY_PATH = ROOT / "data" / "history.csv"
 
 SEAT_LABELS = {
-    "economy": "普通席位 // 經濟艙",
-    "premium-economy": "精良席位 // 豪華經濟",
-    "business": "史詩席位 // 商務艙",
-    "first": "傳說席位 // 頭等艙",
+    "economy": "經濟艙 (Economy)",
+    "premium-economy": "豪華經濟艙 (Premium)",
+    "business": "商務艙 (Business)",
+    "first": "頭等艙 (First)",
 }
 
 STOP_CHOICES = {"不限航段": None, "只要直飛 (Nonstop)": 0, "最多轉 1 次": 1}
@@ -56,127 +56,61 @@ AIRPORTS: dict[str, str] = {
 }
 
 
-def inject_wow_theme() -> None:
+def inject_clean_theme() -> None:
+    """注入乾淨、專業、高對比的現代科技風 CSS。"""
     st.markdown(
         """
         <style>
-        @import url('https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700&family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap');
-
         .stApp {
-            background: radial-gradient(circle at 50% 0%, #11141d 0%, #080a0f 60%, #030407 100%);
-            color: #d1d5db;
-            font-family: 'Inter', sans-serif;
+            background-color: #0b0f19;
+            color: #f3f4f6;
+            font-family: -apple-system, BlinkMacSystemFont, sans-serif;
         }
-
-        .wow-banner {
-            background: linear-gradient(135deg, rgba(30, 41, 59, 0.85) 0%, rgba(15, 23, 42, 0.95) 100%);
-            border: 2px solid #78350f;
-            border-image: linear-gradient(to right, #b45309, #f59e0b, #b45309) 1;
-            border-radius: 6px;
-            padding: 1.2rem 1.6rem;
+        .main-banner {
+            background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+            border: 1px solid #334155;
+            border-radius: 8px;
+            padding: 1.2rem 1.5rem;
             margin-bottom: 1.2rem;
-            box-shadow: 0 0 30px rgba(217, 119, 6, 0.15);
         }
-        .wow-badge {
-            display: inline-block;
-            font-family: 'Cinzel Decorative', serif;
-            font-size: 0.72rem;
-            font-weight: 700;
-            letter-spacing: 0.12em;
-            color: #fbbf24;
-            background: rgba(180, 83, 9, 0.2);
-            border: 1px solid #d97706;
-            padding: 0.15rem 0.6rem;
-            border-radius: 4px;
-            margin-bottom: 0.3rem;
-        }
-        .wow-title {
-            font-family: 'Cinzel Decorative', serif;
-            font-size: 1.8rem;
-            font-weight: 700;
-            color: #fde68a;
-            margin: 0;
-        }
-        .wow-subtitle {
-            font-size: 0.8rem;
-            color: #9ca3af;
-            margin-top: 0.3rem;
-            font-family: 'JetBrains Mono', monospace;
-        }
-
-        /* 卡片美化：更緊湊、資訊一目了然 */
-        .wow-flight-card {
-            background: linear-gradient(145deg, #131824 0%, #0b0f17 100%);
+        .flight-row-card {
+            background: #111827;
             border: 1px solid #374151;
             border-radius: 8px;
-            padding: 0.9rem 1.1rem;
+            padding: 1rem 1.25rem;
             margin-bottom: 0.75rem;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
-            transition: all 0.2s ease;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
         }
-        .wow-flight-card:hover {
-            border-color: #d97706;
-            box-shadow: 0 0 16px rgba(217, 119, 6, 0.2);
+        .flight-row-card:hover {
+            border-color: #0ea5e9;
         }
-        .wow-card-epic {
-            border: 1px solid #a335ee !important;
-            border-left: 5px solid #a335ee !important;
-            background: linear-gradient(145deg, #1d142c 0%, #0b0f17 100%) !important;
-        }
-        .wow-card-rare {
-            border-left: 5px solid #0070dd !important;
-        }
-
-        .wow-price-tag {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 1.35rem;
+        .price-direct {
+            font-size: 1.4rem;
             font-weight: 700;
-            color: #fbbf24;
-        }
-        .wow-ota-tag {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.75rem;
             color: #38bdf8;
         }
-        .wow-airline {
+        .price-ota {
+            font-size: 1.1rem;
             font-weight: 600;
-            color: #f3f4f6;
-            font-size: 0.95rem;
+            color: #34d399;
         }
-        .wow-meta {
-            font-family: 'JetBrains Mono', monospace;
-            font-size: 0.78rem;
-            color: #9ca3af;
+        .badge-deal {
+            background: rgba(239, 68, 68, 0.2);
+            border: 1px solid #ef4444;
+            color: #fca5a5;
+            padding: 0.1rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 700;
         }
-
-        [data-testid="stForm"], [data-testid="stExpander"] {
-            background: rgba(15, 23, 42, 0.85) !important;
-            border: 1px solid #4b5563 !important;
-            border-radius: 8px !important;
-        }
-        [data-testid="stMetric"] {
-            background: linear-gradient(160deg, #111827 0%, #0b0f17 100%);
-            border: 1px solid #b45309;
-            border-radius: 6px;
-            padding: 0.7rem 0.9rem;
-        }
-        [data-testid="stMetricLabel"] {
-            color: #9ca3af !important;
-            font-family: 'Cinzel Decorative', serif;
-            font-size: 0.7rem !important;
-        }
-        [data-testid="stMetricValue"] {
-            font-family: 'JetBrains Mono', monospace !important;
-            color: #fbbf24 !important;
-            font-weight: 700 !important;
-        }
-        button[kind="primaryFormSubmit"], button[kind="primary"] {
-            background: linear-gradient(90deg, #9a3412 0%, #b45309 50%, #d97706 100%) !important;
-            border: 1px solid #f59e0b !important;
-            color: #ffffff !important;
-            font-family: 'Cinzel Decorative', serif !important;
-            font-weight: 700 !important;
-            border-radius: 6px !important;
+        .badge-self-transfer {
+            background: rgba(245, 158, 11, 0.2);
+            border: 1px solid #f59e0b;
+            color: #fcd34d;
+            padding: 0.1rem 0.5rem;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 600;
         }
         </style>
         """,
@@ -255,7 +189,6 @@ def cached_search(
 def mark_deals(rows: list[dict]) -> pd.DataFrame:
     baselines = build_baselines(read_history(), currency="EUR")
     rules = load_config().deal_rules
-    
     for row in rows:
         key = (row["from_airport"], row["to_airport"], row["departure_date"])
         prices = (
@@ -267,13 +200,10 @@ def mark_deals(rows: list[dict]) -> pd.DataFrame:
         row["baseline_median"] = int(pd.Series(prices).median()) if prices else None
 
     df = pd.DataFrame(rows)
-    if not df.empty:
-        # 【智慧保底特價機制】：若歷史資料不足導致 0 筆特價，自動將價格排名前 15% 的超低價航班升格為特價！
-        if df["is_deal"].sum() == 0:
-            df = df.sort_values("price").reset_index(drop=True)
-            cutoff_idx = max(1, int(len(df) * 0.15))
-            df.loc[:cutoff_idx - 1, "is_deal"] = True
-            
+    if not df.empty and df["is_deal"].sum() == 0:
+        df = df.sort_values("price").reset_index(drop=True)
+        cutoff = max(1, int(len(df) * 0.15))
+        df.loc[:cutoff - 1, "is_deal"] = True
     return df
 
 
@@ -286,12 +216,10 @@ def format_duration(minutes) -> str:
 
 
 def clean_airline_name(raw_airlines) -> str:
-    """清理航司名稱，過濾冗長的德文代理說明如 'Durchgeführt von...'"""
     if isinstance(raw_airlines, list):
         name = "、".join(raw_airlines)
     else:
         name = str(raw_airlines or "未知航空")
-    
     if "Durchgeführt von" in name:
         name = name.split("Durchgeführt von")[0].strip()
     if "operated by" in name.lower():
@@ -299,9 +227,10 @@ def clean_airline_name(raw_airlines) -> str:
     return name.strip(" ,·-")
 
 
-def render_results_grid(df: pd.DataFrame, currency: str, key_prefix: str = "search") -> None:
+def render_professional_dashboard(df: pd.DataFrame, currency: str, key_prefix: str = "search") -> None:
+    """專業資訊豐富的航班雷達儀表板（雙價格 + 自行轉機 + 完整時間資訊）。"""
     if df.empty:
-        st.info("未偵測到符合條件的航班，請嘗試放寬條件。")
+        st.info("未偵測到符合條件的航班。")
         return
 
     df["price"] = pd.to_numeric(df["price"], errors="coerce")
@@ -313,122 +242,90 @@ def render_results_grid(df: pd.DataFrame, currency: str, key_prefix: str = "sear
     direct = view[view["stops"] == 0]
     deals_df = view[view["is_deal"] == True]
 
+    # 頂部指標
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("最低直銷金幣", f"€ {int(cheapest['price']):,}")
-    col2.metric("直飛首選底價", f"€ {int(direct['price'].min()):,}" if not direct.empty else "無直飛航線")
-    col3.metric("掉落有效組合", f"{len(view)} 筆")
-    col4.metric("史詩特價命中", f"{len(deals_df)} 筆")
+    col1.metric("最低直銷票價", f"€ {int(cheapest['price']):,}")
+    col2.metric("最低代理商 (OTA)", f"€ {int(view['ota_price'].dropna().min()):,}" if not view['ota_price'].dropna().empty else "無資料")
+    col3.metric("直飛最低價", f"€ {int(direct['price'].min()):,}" if not direct.empty else "無直飛")
+    col4.metric("精選特價組合", f"{len(deals_df)} 筆")
 
     st.markdown("---")
 
-    tab_deals, tab_all = st.tabs([
-        f"🔥 史詩特價專區 ({len(deals_df)} 筆)",
-        f"📋 全部可用戰利品 ({len(view)} 筆)"
-    ])
+    # 篩選工具列
+    col_f1, col_f2, col_f3 = st.columns(3)
+    only_deals = col_f1.checkbox("🔥 僅顯示特價推薦", value=False, key=f"{key_prefix}_deals")
+    only_direct = col_f2.checkbox("✈️ 僅顯示直飛航線", value=False, key=f"{key_prefix}_direct")
+    max_budget = col_f3.slider("最高預算 (EUR)", int(view["price"].min()), int(view["price"].max()), int(view["price"].max()), step=50, key=f"{key_prefix}_budget")
 
-    with tab_deals:
-        if deals_df.empty:
-            st.info("⚔️ 目前無特價紀錄。")
-        else:
-            st.markdown("### 🌟 全場精選最高 CP 值與超低價特價機票")
-            for i, row in deals_df.reset_index(drop=True).iterrows():
-                _render_wow_card(row, currency, i + 1, force_epic=True)
+    filtered = view[view["price"] <= max_budget]
+    if only_deals:
+        filtered = filtered[filtered["is_deal"] == True]
+    if only_direct:
+        filtered = filtered[filtered["stops"] == 0]
 
-    with tab_all:
-        col_f1, col_f2 = st.columns(2)
-        only_direct = col_f1.checkbox("僅顯示直飛航線 (Nonstop)", value=False, key=f"{key_prefix}_direct")
-        min_p = int(view["price"].min())
-        max_p = int(view["price"].max())
-        max_budget = col_f2.slider("最高金幣預算 (EUR)", min_p, max_p, max_p, step=50, key=f"{key_prefix}_budget")
+    st.markdown(f"### 📋 完整報價清單（共 {len(filtered)} 筆結果，已按價格從低到高排序）")
 
-        filtered_view = view[(view["price"] <= max_budget)]
-        if only_direct:
-            filtered_view = filtered_view[filtered_view["stops"] == 0]
-
-        st.markdown(f"### ⚔️ 排序清單（共 {len(filtered_view)} 筆符合條件）")
+    for index, row in filtered.iterrows():
+        price = int(row["price"])
+        ota_price = row.get("ota_price")
+        airlines = clean_airline_name(row.get("airlines"))
+        stops = int(row.get("stops", 0))
+        dep_date = row.get("departure_date", "")
+        segments = row.get("segments", [])
         
-        for i in range(0, len(filtered_view), 2):
-            c_left, c_right = st.columns(2)
-            with c_left:
-                if i < len(filtered_view):
-                    _render_wow_card(filtered_view.iloc[i], currency, i + 1)
-            with c_right:
-                if i + 1 < len(filtered_view):
-                    _render_wow_card(filtered_view.iloc[i + 1], currency, i + 2)
-
-    csv_data = view.to_csv(index=False).encode("utf-8-sig")
-    st.download_button(
-        "⬇ 下載完整戰利品矩陣 CSV",
-        data=csv_data,
-        file_name=f"azeroth-radar_{cheapest['from_airport']}-{cheapest['to_airport']}.csv",
-        mime="text/csv",
-        key=f"{key_prefix}_download",
-    )
-
-
-def _render_wow_card(row, currency: str, rank: int, force_epic: bool = False) -> None:
-    is_deal_item = force_epic or bool(row.get("is_deal", False))
-    stops = int(row.get("stops", 0))
-    
-    card_class = "wow-flight-card"
-    quality_badge = "🟢 精良"
-    if is_deal_item:
-        card_class += " wow-card-epic"
-        quality_badge = "🟣 史詩特價 (EPIC DEAL)"
-    elif stops == 0:
-        card_class += " wow-card-rare"
-        quality_badge = "🔵 稀有 (直飛)"
-
-    price = int(row["price"])
-    ota_price = row.get("ota_price")
-    
-    price_str = f"€ {price:,}"
-    if pd.notna(ota_price) and ota_price > 0 and int(ota_price) < price:
-        price_str += f" <span class='wow-ota-tag'>(OTA: € {int(ota_price):,})</span>"
-
-    airlines = clean_airline_name(row.get("airlines"))
-    
-    segments = row.get("segments", [])
-    has_self_transfer = any(
-        "self-transfer" in str(seg).lower() or "eigener" in str(seg).lower()
-        for seg in segments
-    )
-    transfer_text = "直飛 NONSTOP"
-    if stops > 0:
+        dep_time = segments[0].get("departure_time", "") if segments else ""
+        arr_time = segments[-1].get("arrival_time", "") if segments else ""
+        duration = format_duration(row.get("duration_minutes", 0))
+        
+        # 檢查自行轉機
+        has_self_transfer = any(
+            "self-transfer" in str(seg).lower() or "eigener" in str(seg).lower()
+            for seg in segments
+        )
+        
         transfers_list = [
             airport for seg in segments for airport in seg.get("transfer_airports", [])
         ]
-        transfer_text = f"{stops} 站 ({'、'.join(transfers_list)})" if transfers_list else f"{stops} 站"
-        if has_self_transfer:
-            transfer_text += " 🔄 自行轉機"
+        transfer_desc = "直飛 (Nonstop)" if stops == 0 else f"{stops} 站 ({'、'.join(transfers_list)})"
+        
+        deal_badge = '<span class="badge-deal">🔥 特價 DEAL</span>' if row.get("is_deal") else ''
+        transfer_badge = '<span class="badge-self-transfer">🔄 自行轉機 (Eigener Transfer)</span>' if has_self_transfer else ''
 
-    dep_date = row.get("departure_date", "")
-    dep_time = segments[0].get("departure_time", "") if segments else ""
-    arr_time = segments[-1].get("arrival_time", "") if segments else ""
-    duration = format_duration(row.get("duration_minutes", 0))
+        # 雙價格顯示邏輯
+        price_html = f'<span class="price-direct">€ {price:,}</span> <span style="font-size:0.8rem; color:#94a3b8;">(官網直銷)</span>'
+        if pd.notna(ota_price) and ota_price > 0 and int(ota_price) < price:
+            price_html += f'&nbsp;&nbsp;|&nbsp;&nbsp;<span class="price-ota">€ {int(ota_price):,}</span> <span style="font-size:0.8rem; color:#34d399;">(OTA 代理商)</span>'
 
-    st.markdown(
-        f"""
-        <div class="{card_class}">
-            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.3rem;">
-                <div>
-                    <span style="font-size: 0.7rem; font-weight: 700; color: #fbbf24; font-family: 'Cinzel Decorative', serif;">#{rank} | {quality_badge}</span>
-                    <div class="wow-airline">{airlines}</div>
+        st.markdown(
+            f"""
+            <div class="flight-row-card">
+                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
+                    <div>
+                        <span style="font-size: 0.8rem; color: #94a3b8; font-weight: 600;">#{index+1}</span>
+                        &nbsp;{deal_badge}&nbsp;{transfer_badge}
+                        <div style="font-size: 1.05rem; font-weight: 700; color: #f8fafc; margin-top: 0.2rem;">{airlines}</div>
+                    </div>
+                    <div style="text-align: right;">
+                        <div>{price_html}</div>
+                    </div>
                 </div>
-                <div style="text-align: right;">
-                    <div class="wow-price-tag">{price_str}</div>
+                <div style="display: flex; justify-content: space-between; font-size: 0.88rem; color: #cbd5e1; border-top: 1px solid #1e293b; padding-top: 0.5rem; margin-top: 0.5rem;">
+                    <span><b>航線：</b> {row['from_airport']} ➔ {row['to_airport']} &nbsp;|&nbsp; <b>出發日：</b> {dep_date}</span>
+                    <span><b>時段：</b> {dep_time} – {arr_time} ({duration}) &nbsp;|&nbsp; <b>轉機：</b> {transfer_desc}</span>
                 </div>
             </div>
-            <div style="font-size: 0.85rem; color: #38bdf8; font-weight: 600; margin-bottom: 0.3rem;">
-                {row['from_airport']} ➔ {row['to_airport']} &nbsp;|&nbsp; 出發日：{dep_date}
-            </div>
-            <div class="wow-meta" style="display: flex; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 0.3rem; margin-top: 0.3rem;">
-                <span>⏳ 時段：{dep_time} – {arr_time} ({duration})</span>
-                <span>🛡️ 轉機：{transfer_text}</span>
-            </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
+            """,
+            unsafe_allow_html=True,
+        )
+
+    # 下載按鈕
+    csv_data = view.to_csv(index=False).encode("utf-8-sig")
+    st.download_button(
+        "⬇ 下載完整報價矩陣 CSV",
+        data=csv_data,
+        file_name=f"flight_deals_{cheapest['from_airport']}-{cheapest['to_airport']}.csv",
+        mime="text/csv",
+        key=f"{key_prefix}_download",
     )
 
 
@@ -440,13 +337,13 @@ def search_tab() -> None:
 
     with st.form("search_form"):
         trip_label = st.radio(
-            "遠征模式 // ITINERARY MODE",
+            "航程模式 // ITINERARY MODE",
             ["單程", "往返", "開口行程"],
             horizontal=True,
         )
         col1, col2 = st.columns(2)
-        origin = col1.selectbox("出發要塞 // ORIGIN", codes, index=default_origin, format_func=airport_label)
-        destination = col2.selectbox("目標領地 // DESTINATION", codes, index=default_dest, format_func=airport_label)
+        origin = col1.selectbox("出發機場 // ORIGIN", codes, index=default_origin, format_func=airport_label)
+        destination = col2.selectbox("目的機場 // DESTINATION", codes, index=default_dest, format_func=airport_label)
 
         col3, col4 = st.columns(2)
         departure = col3.date_input("出發日期 // DEPARTURE", value=date.today() + timedelta(days=30), min_value=date.today())
@@ -457,15 +354,15 @@ def search_tab() -> None:
             return_date = col3.date_input("回程日期 // RETURN", value=departure + timedelta(days=7), min_value=departure)
 
         col5, col6 = st.columns(2)
-        seat = col5.selectbox("席位階級 // CABIN CLASS", list(SEAT_LABELS), format_func=lambda s: SEAT_LABELS[s])
+        seat = col5.selectbox("艙等 // CABIN CLASS", list(SEAT_LABELS), format_func=lambda s: SEAT_LABELS[s])
         stops_label = col6.radio("轉機限制 // STOPS", list(STOP_CHOICES), horizontal=True)
 
-        with st.expander("⚙ 瀏覽器深度引擎參數（預設鎖定價格升冪排序與自行轉機）", expanded=False):
+        with st.expander("⚙ 進階參數（預設解鎖價格排序與自行轉機）", expanded=False):
             col7, col8 = st.columns(2)
             carry_on_bags = col7.number_input("隨身行李數", min_value=0, max_value=2, value=0)
             checked_bags = col8.number_input("託運行李數", min_value=0, max_value=2, value=0)
 
-        submitted = st.form_submit_button("⚔️ 啟動艾澤拉斯最低價雷達", type="primary", use_container_width=True)
+        submitted = st.form_submit_button("🚀 啟動即時航班價格雷達", type="primary", use_container_width=True)
 
     if submitted:
         if origin == destination:
@@ -481,7 +378,7 @@ def search_tab() -> None:
                 requests.append((tuple(segments), trip_type))
 
             rows: list[dict] = []
-            progress = st.progress(0.0, text="🛡️ 正在召喚 Playwright 瀏覽器精靈，解鎖 Google Flights 最便宜分頁…")
+            progress = st.progress(0.0, text="🛰 正在透過 Playwright 抓取 Google Flights 最便宜分頁與雙價格…")
             for index, (segments, t_type) in enumerate(requests):
                 try:
                     rows.extend(
@@ -500,7 +397,7 @@ def search_tab() -> None:
                         )
                     )
                 except Exception as exc:
-                    st.warning(f"航段查詢異常：{exc}")
+                    st.warning(f"查詢異常：{exc}")
                 progress.progress((index + 1) / len(requests))
             progress.empty()
 
@@ -513,28 +410,28 @@ def search_tab() -> None:
 
     result = st.session_state.get("search_result")
     if not result:
-        st.caption("💡 提示：系統已鎖定絕對價格升冪排序，並自動為您挑選全場最高 CP 值特價組合。")
+        st.info("👈 請在上方設定航線與日期，點擊「啟動即時航班價格雷達」開始查詢。")
         return
 
     if not result["rows"]:
-        st.error("本次遠征未取得任何有效戰利品，請稍後重試。")
+        st.error("本次查詢未取得任何有效票價，請稍後重試。")
         return
 
     df = mark_deals(result["rows"])
-    render_results_grid(df, config.settings.currency, key_prefix="search")
+    render_professional_dashboard(df, config.settings.currency, key_prefix="search")
 
 
 def watchlist_tab() -> None:
     snapshot = load_snapshot()
     if snapshot is None:
-        st.info("尚未同步遠征快照。")
+        st.info("尚未同步排程快照。")
         return
     offers_df = pd.DataFrame(snapshot.get("offers", []))
     if offers_df.empty:
-        st.info("尚無監控戰利品。")
+        st.info("尚無監控資料。")
         return
     currency = snapshot.get("currency", "EUR")
-    render_results_grid(offers_df, currency, key_prefix="watch")
+    render_professional_dashboard(offers_df, currency, key_prefix="watch")
 
 
 def trend_tab() -> None:
@@ -544,25 +441,25 @@ def trend_tab() -> None:
         return
     history["price"] = pd.to_numeric(history["price"], errors="coerce")
     history = history.dropna(subset=["price"])
-    st.line_chart(history.groupby("observed_at")["price"].min(), y_label="歷史最低金幣 (EUR)", color="#fbbf24")
+    st.line_chart(history.groupby("observed_at")["price"].min(), y_label="歷史最低票價 (EUR)", color="#38bdf8")
 
 
 def main() -> None:
-    inject_wow_theme()
+    inject_clean_theme()
     st.markdown(
         """
-        <div class="wow-banner">
-            <div class="wow-badge">AZEROTH FLIGHT RAID // MARKET: DE (EUR) // EPIC DEAL FINDER</div>
-            <h1 class="wow-title">艾澤拉斯特價機票監控中樞</h1>
-            <div class="wow-subtitle">WORLD OF WARCRAFT THEMED GOOGLE FLIGHTS TELEMETRY &amp; EPIC DEAL FINDER</div>
+        <div class="main-banner">
+            <div style="font-family: monospace; font-size: 0.75rem; color: #38bdf8; font-weight: 700; margin-bottom: 0.2rem;">SYSTEM ONLINE // MARKET: DE (EUR) // DUAL-PRICE &amp; SELF-TRANSFER RADAR</div>
+            <h1 style="font-size: 1.75rem; font-weight: 700; color: #f8fafc; margin: 0;">國際航班價格雷達與雙價格分析儀</h1>
+            <div style="font-size: 0.82rem; color: #94a3b8; margin-top: 0.2rem;">Real-Time Google Flights Price Telemetry with Direct vs. OTA Pricing &amp; Self-Transfer Support</div>
         </div>
         """,
         unsafe_allow_html=True,
     )
 
     tab_search, tab_watch, tab_trend = st.tabs([
-        "⚡ 實時戰利品搜尋",
-        "🛡️ 遠征航線雷達",
+        "⚡ 即時航班搜尋",
+        "🛰 航線監控清單",
         "📈 歷史價格走勢",
     ])
     with tab_search:
