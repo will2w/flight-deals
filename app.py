@@ -296,7 +296,7 @@ def render_professional_table(df: pd.DataFrame, currency: str, trip_label: str, 
 
         if not is_roundtrip:
             table_rows.append({
-                "排名": index + 1,
+                "排名": str(index + 1),
                 "特價": deal_tag,
                 f"票價 ({currency})": price_str,
                 "航空公司": airlines,
@@ -331,7 +331,7 @@ def render_professional_table(df: pd.DataFrame, currency: str, trip_label: str, 
                 ret_duration = format_duration(ret_seg.get("duration_minutes", 0))
 
             table_rows.append({
-                "排名": index + 1,
+                "排名": str(index + 1),
                 "特價": deal_tag,
                 f"票價 ({currency})": price_str,
                 "航空公司": airlines,
@@ -354,6 +354,8 @@ def render_professional_table(df: pd.DataFrame, currency: str, trip_label: str, 
             })
 
     table_df = pd.DataFrame(table_rows)
+    table_df["排名"] = table_df["排名"].astype(str).replace("nan", "").replace("None", "")
+
     st.dataframe(table_df, use_container_width=True, hide_index=True)
 
     csv_data = view.to_csv(index=False).encode("utf-8-sig")
