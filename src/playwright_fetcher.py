@@ -1,4 +1,4 @@
-"""Playwright 全量深度擷取：解鎖頂部 Günstigste Flüge 與精準航司解析 (src/playwright_fetcher.py)"""
+"""Playwright 全量深度擷取：精準票價過濾與航司解析 (src/playwright_fetcher.py)"""
 from __future__ import annotations
 
 import logging
@@ -90,13 +90,11 @@ def fetch_flights(
             _dismiss_consent_dialog(page)
             _ensure_cheapest_tab_selected(page)
 
-            # 滾動頁面以加載動態航班
             for _ in range(scroll_count):
                 _expand_all_hidden_flights(page)
                 page.evaluate("window.scrollBy(0, 4000)")
                 page.wait_for_timeout(DEFAULT_WAIT_MS)
 
-            # 【關鍵升級】：廣泛擷取所有可能的航班卡片容器（包含 Günstigste Flüge 與 Andere Flüge）
             cards = page.query_selector_all("li, div[role='listitem'], div.pIav2d, div.FlightsCtn, div.y11eBe, div.gws-flights-results__itinerary-card")
             if not cards:
                 cards = page.query_selector_all("div")
@@ -178,7 +176,6 @@ def _parse_card(card) -> PlaywrightFlight | None:
     aria_label = card.get_attribute("aria-label") or ""
     
     combined_text = f"{inner_text}\n{aria_label}".strip()
-    # 必須同時包含價格符號與時間格式，確保是有效的航班卡片
     if not combined_text or "€" not in combined_text or not re.search(r"\d{1,2}:\d{2}", combined_text):
         return None
 
@@ -186,17 +183,14 @@ def _parse_card(card) -> PlaywrightFlight | None:
     if not times:
         return None
 
-    prices = _extract_all_prices(combined_text)
+    prices = _extract_true_prices(combined_text)
     if not prices:
         return None
 
-    prices = sorted(list(set(prices)))
-    primary_price = prices[0]  # 直接抓取最低有效價格（如 328 €）
-    ota_price = prices[1] if len(prices) > 1 else None
+    lowest_price = prices[0]  # 嚴格取真正的最低票價
 
     flight = PlaywrightFlight(
-        price=primary_price,
-        ota_price=ota_price,
+        price=lowest_price,
         departure_time=times[0][0],
         arrival_time=times[0][1],
     )
@@ -222,22 +216,33 @@ def _parse_card(card) -> PlaywrightFlight | None:
     return flight
 
 
-def _extract_all_prices(text: str) -> list[int]:
-    patterns = [
-        r"€\s*([\d.]+)",
-        r"([\d.]+)\s*€",
-        r"EUR\s*([\d.]+)",
-        r"([\d.]+)\s*EUR",
-        r"([\d.]+)\s*Euro",
-    ]
+def _extract_true_prices(text: str) -> list[int]:
+    """【關鍵修復】：嚴格從包含 € 符號的行中提取真正票價，徹底排除 kg、% 與碳排干擾數字"""
     values: list[int] = []
-    for pattern in patterns:
-        matches = re.findall(pattern, text, re.IGNORECASE)
-        for m in matches:
-            cleaned = m.replace(".", "").strip()
+    lines = text.splitlines()
+    for line in lines:
+        if "€" in line:
+            # 排除含有干擾單位的行
+            l_lower = line.lower()
+            if any(kw in l_lower for kw in ["kg", "%", "co2", "std", "min", "h", "m"]):
+                continue
+            matches = re.findall(r"([\d.]+)\s*€|€\s*([\d.]+)", line)
+            for m in matches:
+                num_str = m[0] or m[1]
+                cleaned = num_str.replace(".", "").strip()
+                if cleaned.isdigit():
+                    val = int(cleaned)
+                    if 50 <= val <= 15000:
+                        values.append(val)
+    if not values:
+        # 備用全域搜尋
+        all_matches = re.findall(r"€\s*([\d.]+)|([\d.]+)\s*€", text)
+        for m in all_matches:
+            num_str = m[0] or m[1]
+            cleaned = num_str.replace(".", "").strip()
             if cleaned.isdigit():
                 val = int(cleaned)
-                if 10 <= val <= 15000:
+                if 50 <= val <= 15000:
                     values.append(val)
     return sorted(list(set(values)))
 
@@ -255,7 +260,6 @@ def _extract_duration(text: str) -> int:
 def _extract_airlines(card, text: str) -> list[str]:
     airlines: list[str] = []
     
-    # 1. 優先從圖片 Logo alt/title 抓取
     try:
         imgs = card.query_selector_all("img")
         for img in imgs:
@@ -267,12 +271,11 @@ def _extract_airlines(card, text: str) -> list[str]:
     except Exception:
         pass
 
-    # 2. 從文字行中智慧提取
     if not airlines:
         lines = [line.strip() for line in text.splitlines() if line.strip()]
         for line in lines:
             l_lower = line.lower()
-            if any(kw in l_lower for kw in ["€", "eur", "std.", "min.", "co2", "stopp", "nonstop", "geschätzt", "kg", "durchschn", "eigener transfer", "flughafenwechsel", "+"]):
+            if any(kw in l_lower for kw in ["€", "eur", "std.", "min.", "co2", "stopp", "nonstop", "geschätzt", "kg", "durchschn", "eigener transfer", "flughafenwechsel"]):
                 continue
             if re.match(r"^\d{1,2}:\d{2}", line):
                 continue
