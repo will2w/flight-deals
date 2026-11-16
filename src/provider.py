@@ -1,5 +1,5 @@
 """Google Flights 資料來源，強制帶入 sc=e 與 tfu=EgoIABAAGAAgAigB 直接鎖定「最便宜」分頁。"""
-from __future -> annotations
+from __future__ import annotations
 
 import logging
 from dataclasses import asdict, dataclass, field
