@@ -1,4 +1,4 @@
-"""Google Flights 資料來源，強制帶入 sc=e 與 tfu=EgoIABAAGAAgAigB 直接鎖定「最便宜」分頁。"""
+"""Google Flights 資料來源，強制在 URL 附加 sc=e 與 tfu 鎖定最便宜分頁。"""
 from __future__ import annotations
 
 import logging
@@ -15,7 +15,7 @@ from fast_flights import (
 
 log = logging.getLogger(__name__)
 
-# 強制 Google Flights 直接開啟「Am günstigsten（最便宜）」分頁與價格排序的參數
+# 強制 Google Flights 直接開啟「Am günstigsten（最便宜）」分頁的內部參數
 CHEAPEST_SORT_TFU = "EgoIABAAGAAgAigB"
 
 
@@ -46,7 +46,7 @@ class Offer:
 
 
 class GoogleFlightsProvider:
-    """擷取 Google Flights 票價，強制鎖定最便宜分頁與 gl=DE。"""
+    """擷取 Google Flights 票價，強制在 URL 附加 sc=e 與 gl=DE。"""
 
     name = "google-flights"
 
@@ -80,7 +80,7 @@ class GoogleFlightsProvider:
         trip_type: str,
         max_stops: int | None,
     ):
-        """建立 Query 並強制注入 sc=e（最便宜分頁）、tfu 與 gl=DE。"""
+        """建立 Query 並強制在 URL 結尾注入 sc=e（最便宜分頁）與 tfu、gl=DE。"""
         query = create_query(
             flights=[
                 FlightQuery(
@@ -105,6 +105,7 @@ class GoogleFlightsProvider:
 
         def enhanced_url() -> str:
             url = original_url_fn()
+            # 將網址轉換為 /travel/flights/search 格式以完整支援 sc=e 參數
             url = url.replace("/travel/flights?", "/travel/flights/search?")
             if "tfu=" not in url:
                 sep = "&" if "?" in url else "?"
@@ -139,7 +140,7 @@ class GoogleFlightsProvider:
         trip_type: str,
         max_stops: int | None = None,
     ) -> list[Offer]:
-        """搜尋行程，優先走 Playwright，若 Playwright 失敗則強制用帶有 sc=e 的 URL 透過 HTTP 抓取。"""
+        """搜尋行程。"""
         if not segments:
             raise ValueError("至少需要一段航程。")
 
@@ -152,7 +153,7 @@ class GoogleFlightsProvider:
         offers: list[Offer] = []
         pw_error = ""
 
-        # 1. 優先嘗試 Playwright 深度擷取
+        # 1. 優先透過 Playwright 抓取帶有 sc=e 的頁面
         if self.use_playwright:
             try:
                 from .playwright_fetcher import fetch_flights
