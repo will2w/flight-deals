@@ -1,4 +1,4 @@
-"""QUEL'THALAS FLIGHT RADAR // 血精靈動態航程表單與左右分欄雙戰情室 (app.py)"""
+"""QUEL'THALAS FLIGHT RADAR // 血精靈雙價格與往返完整航段戰情室 (app.py)"""
 from __future__ import annotations
 
 import json
@@ -244,6 +244,7 @@ def clean_airline_name(raw_airlines) -> str:
 
 
 def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str = "search") -> None:
+    """高資訊密度專業雙價格表格：完美呈現去回程航段、雙價格與轉機細節。"""
     if df.empty:
         st.info("未偵測到符合條件的航班。")
         return
@@ -279,8 +280,25 @@ def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str =
         dep_date = row.get("departure_date", "")
         segments = row.get("segments", [])
         
-        dep_time = segments[0].get("departure_time", "") if segments and isinstance(segments, list) else ""
-        arr_time = segments[-1].get("arrival_time", "") if segments and isinstance(segments, list) else ""
+        # 解析去回程航段與時間
+        outbound_desc = "—"
+        inbound_desc = "—"
+        dep_time = ""
+        arr_time = ""
+        
+        if segments and isinstance(segments, list):
+            # 去程
+            out_seg = segments[0]
+            dep_time = out_seg.get("departure_time", "")
+            arr_time = out_seg.get("arrival_time", "")
+            outbound_desc = f"{row.get('from_airport', '')} ➔ {row..get('to_airport', '')} ({dep_date})"
+            
+            # 回程（若是往返或多航段）
+            if len(segments) > 1:
+                ret_seg = segments[1]
+                ret_dep_date = ret_seg.get("departure_date", dep_date)
+                inbound_desc = f"{ret_seg.get('from_airport', row.get('to_airport', ''))} ➔ {ret_seg.get('to_airport', row.get('from_airport', ''))} ({ret_dep_date})"
+
         duration = format_duration(row.get("duration_minutes", 0))
         
         has_self_transfer = any(
@@ -290,27 +308,31 @@ def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str =
         
         transfers_list = [
             airport for seg in segments for airport in seg.get("transfer_airports", [])
+            if airport
         ] if isinstance(segments, list) else []
         
-        transfer_desc = "直飛 (Nonstop)" if stops == 0 else f"{stops} 站 ({'、'.join(transfers_list)})"
+        transfer_desc = "直飛 (Nonstop)" if stops == 0 else f"{stops} 站"
+        if transfers_list:
+            transfer_desc += f" ({'、'.join(transfers_list)})"
         if has_self_transfer:
             transfer_desc += " [🔄 自行轉機]"
 
+        # 嚴格區分直銷價與 OTA 代理價
         price_display = f"€ {price:,} (直銷)"
         if pd.notna(ota_price) and ota_price > 0 and int(ota_price) < price:
-            price_display = f"€ {price:,} (直) / € {int(ota_price):,} (OTA)"
+            price_display = f"€ {int(ota_price):,} (OTA) / € {price:,} (直銷)"
 
         deal_tag = "🔥 DEAL" if row.get("is_deal") else "—"
 
         table_rows.append({
             "排名": index + 1,
             "特價": deal_tag,
-            f"票價 ({currency})": price_display,
+            f"雙價格 ({currency})": price_display,
             "直銷價(純數值)": price,
             "航空公司": airlines,
-            "航線": f"{row['from_airport']} ➔ {row['to_airport']}",
-            "出發日": dep_date,
-            "起降時段": f"{dep_time} – {arr_time}",
+            "去程航段": outbound_desc,
+            "回程航段": inbound_desc,
+            "起降時段": f"{dep_time} – {arr_time}" if dep_time else "—",
             "總時長": duration,
             "轉機詳情": transfer_desc,
         })
@@ -330,7 +352,7 @@ def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str =
 
 
 def search_tab() -> None:
-    """【即時響應式航程表單】將模式選擇移至表單外部，確保切換單程/往返/開口時即時刷新顯示對應欄位。"""
+    """【動態航程表單】支援單程、往返、開口行程之左右分欄控制面板。"""
     config = load_config()
     codes = list(AIRPORTS)
     default_origin = codes.index("FRA") if "FRA" in codes else (0 if codes else "")
@@ -341,7 +363,6 @@ def search_tab() -> None:
     with col_left:
         st.markdown("### 🎛️ 太陽之井雷達控制面板")
         
-        # 移至表單外部的航程模式選擇器，切換時即時 rerun 展開對應欄位
         trip_label = st.radio(
             "航程模式 // ITINERARY MODE",
             ["單程", "往返", "開口行程"],
