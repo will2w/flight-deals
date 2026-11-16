@@ -1,4 +1,4 @@
-"""QUEL'THALAS FLIGHT RADAR // 血精靈風格動態航程表單與左右分欄雙戰情室 (app.py)"""
+"""QUEL'THALAS FLIGHT RADAR // 血精靈動態航程表單與左右分欄雙戰情室 (app.py)"""
 from __future__ import annotations
 
 import json
@@ -330,7 +330,7 @@ def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str =
 
 
 def search_tab() -> None:
-    """【動態航程表單】支援單程、往返、開口行程之左右分欄控制面板。"""
+    """【即時響應式航程表單】將模式選擇移至表單外部，確保切換單程/往返/開口時即時刷新顯示對應欄位。"""
     config = load_config()
     codes = list(AIRPORTS)
     default_origin = codes.index("FRA") if "FRA" in codes else (0 if codes else "")
@@ -340,15 +340,16 @@ def search_tab() -> None:
 
     with col_left:
         st.markdown("### 🎛️ 太陽之井雷達控制面板")
-        with st.form("search_form"):
-            trip_label = st.radio(
-                "航程模式 // ITINERARY MODE",
-                ["單程", "往返", "開口行程"],
-                horizontal=True,
-                key="trip_mode_radio"
-            )
+        
+        # 移至表單外部的航程模式選擇器，切換時即時 rerun 展開對應欄位
+        trip_label = st.radio(
+            "航程模式 // ITINERARY MODE",
+            ["單程", "往返", "開口行程"],
+            horizontal=True,
+            key="trip_mode_radio"
+        )
 
-            # 第一航段
+        with st.form("search_form"):
             st.markdown("##### 🛫 去程航段 (Outbound)")
             origin = st.selectbox("出發機場 // ORIGIN", codes, index=default_origin, format_func=airport_label, key="out_origin")
             destination = st.selectbox("目的機場 // DESTINATION", codes, index=default_dest, format_func=airport_label, key="out_dest")
@@ -358,7 +359,6 @@ def search_tab() -> None:
             return_origin = None
             return_destination = None
 
-            # 往返或開口行程：動態渲染回程條件
             if trip_label == "往返":
                 st.markdown("##### 🛬 回程航段 (Return)")
                 return_date = st.date_input("回程日期 // RETURN", value=departure + timedelta(days=7), min_value=departure)
