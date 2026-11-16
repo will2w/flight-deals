@@ -1,4 +1,4 @@
-"""Google Flights 資料來源，強制在 URL 附加允許自行轉機與最便宜分頁參數。"""
+"""Google Flights 資料來源，擴充支援雙價格（官網直銷價與 OTA 代理商最低價）。"""
 from __future__ import annotations
 
 import logging
@@ -13,18 +13,18 @@ from fast_flights import (
 
 log = logging.getLogger(__name__)
 
-# 強制 Google Flights 直接開啟「Am günstigsten（最便宜）」分頁與價格排序的內部參數
 CHEAPEST_SORT_TFU = "EgoIABAAGAAgAigB"
 
 
 @dataclass
 class Offer:
-    """正規化後的單一行程報價。"""
+    """正規化後的單一行程報價（支援雙價格）。"""
 
     from_airport: str
     to_airport: str
     departure_date: str
-    price: int
+    price: int  # 主要價格（相容舊有排序與邏輯）
+    ota_price: int | None = None  # 代理商 OTA 最低價（若有）
     currency: str = "EUR"
     trip_type: str = "one-way"
     price_basis: str = "playwright_scroll_quote"
@@ -44,7 +44,7 @@ class Offer:
 
 
 class GoogleFlightsProvider:
-    """擷取 Google Flights 票價，強制鎖定最便宜分頁、允許自行轉機與 gl=DE。"""
+    """擷取 Google Flights 票價，強制鎖定最便宜分頁與雙價格解析。"""
 
     name = "google-flights"
 
@@ -78,7 +78,6 @@ class GoogleFlightsProvider:
         trip_type: str,
         max_stops: int | None,
     ) -> str:
-        """建立 Query 後，手動強制拼接 sc=e、tfu 以及允許自行轉機的參數。"""
         query = create_query(
             flights=[
                 FlightQuery(
@@ -96,7 +95,7 @@ class GoogleFlightsProvider:
             max_stops=max_stops,
             carry_on_bags=self.carry_on_bags,
             checked_bags=self.checked_bags,
-            hide_separate_and_self_transfer=False,  # 強制設為 False，允許自行轉機
+            hide_separate_and_self_transfer=False,
             exclude_basic_economy=self.exclude_basic_economy,
         )
         url = query.url()
@@ -108,11 +107,6 @@ class GoogleFlightsProvider:
             url += "&sc=e"
         if f"gl={self.gl}" not in url:
             url += f"&gl={self.gl}"
-
-        # 關鍵：在 URL 結尾強制加上允許自行轉機與分開出票的內部參數
-        if "tfs=" in url and "EgIIARAC" not in url:
-            # 確保 Google 路由允許 self-transfer 與 separate tickets
-            pass
 
         return url
 
@@ -135,7 +129,6 @@ class GoogleFlightsProvider:
         trip_type: str,
         max_stops: int | None = None,
     ) -> list[Offer]:
-        """使用帶有 sc=e 與允許自行轉機的網址進行 Playwright 深度擷取。"""
         if not segments:
             raise ValueError("至少需要一段航程。")
 
@@ -143,8 +136,6 @@ class GoogleFlightsProvider:
             return self._search_multicity(segments, max_stops)
 
         query_url = self._build_exact_cheapest_url(segments, trip_type, max_stops)
-        log.info("最終產生的 Google Flights 查詢網址：%s", query_url)
-
         offers: list[Offer] = []
         origin, destination, departure_date = segments[0]
         return_date = segments[1][2] if len(segments) > 1 else None
@@ -154,7 +145,7 @@ class GoogleFlightsProvider:
         flights = fetch_flights(query_url, max_results=self.playwright_max_results)
 
         if not flights:
-            raise RuntimeError("Playwright 擷取未取得任何航班結果，請確認網路與瀏覽器相依性。")
+            raise RuntimeError("Playwright 擷取未取得任何航班結果。")
 
         for flight in flights:
             if max_stops is not None and flight.stops > max_stops:
@@ -192,6 +183,7 @@ class GoogleFlightsProvider:
                     to_airport=destination,
                     departure_date=departure_date,
                     price=flight.price,
+                    ota_price=flight.ota_price,
                     currency=self.currency,
                     trip_type=trip_type,
                     price_basis="playwright_scroll_quote",
@@ -209,7 +201,7 @@ class GoogleFlightsProvider:
             )
 
         if not offers:
-            raise ValueError("擷取結果中沒有符合轉機條件的航班。")
+            raise ValueError("擷取結果中沒有符合條件的航班。")
         offers.sort(key=lambda o: o.price)
         return offers
 
@@ -240,12 +232,15 @@ class GoogleFlightsProvider:
                 for offer in selected
                 for airport in offer.transfer_airports
             ]
+            total_price = sum(offer.price for offer in selected)
+            total_ota = sum(offer.ota_price if offer.ota_price else offer.price for offer in selected)
             offers.append(
                 Offer(
                     from_airport=segments[0][0],
                     to_airport=segments[0][1],
                     departure_date=segments[0][2],
-                    price=sum(offer.price for offer in selected),
+                    price=total_price,
+                    ota_price=total_ota if total_ota != total_price else None,
                     currency=self.currency,
                     trip_type="multi-city",
                     price_basis="sum_of_one_way_quotes",
