@@ -1,15 +1,25 @@
-observed_at,from_airport,to_airport,departure_date,price,airlines,stops,duration_minutes,departure_time,arrival_time,is_best,provider
-2026-11-14T02:00:00+00:00,TPE,NRT,2026-12-01,9800,BR,0,185,08:40,12:45,True,google-flights
-2026-11-14T02:00:00+00:00,TPE,NRT,2026-12-01,11200,CI,0,190,09:15,13:25,False,google-flights
-2026-11-14T02:00:00+00:00,TPE,BKK,2026-12-17,8600,BR,0,215,07:30,10:05,True,google-flights
-2026-11-14T02:00:00+00:00,TPE,BKK,2026-12-17,9200,CI,0,220,08:00,10:40,False,google-flights
-2026-11-15T02:00:00+00:00,TPE,NRT,2026-12-01,9500,BR,0,185,08:40,12:45,True,google-flights
-2026-11-15T02:00:00+00:00,TPE,NRT,2026-12-01,10800,CI,0,190,09:15,13:25,False,google-flights
-2026-11-15T02:00:00+00:00,TPE,BKK,2026-12-17,8800,BR,0,215,07:30,10:05,True,google-flights
-2026-11-15T02:00:00+00:00,TPE,BKK,2026-12-17,9400,CI,0,220,08:00,10:40,False,google-flights
-2026-11-16T02:00:00+00:00,TPE,NRT,2026-12-01,5988,BR,0,185,08:40,12:45,True,google-flights
-2026-11-16T02:00:00+00:00,TPE,NRT,2026-12-01,6300,JX,0,190,10:05,14:15,False,google-flights
-2026-11-16T02:00:00+00:00,TPE,NRT,2026-12-01,9600,CI,1,420,06:00,14:00,False,google-flights
-2026-11-16T02:00:00+00:00,TPE,BKK,2026-12-17,8600,BR,0,215,07:30,10:05,True,google-flights
-2026-11-16T02:00:00+00:00,TPE,BKK,2026-12-17,9100,VN,1,395,09:40,16:15,False,google-flights
-2026-11-16T02:00:00+00:00,TPE,SGN,2027-01-15,7200,VN,0,205,07:45,10:10,True,google-flights
+observed_at,from_airport,to_airport,departure_date,price,currency,airlines,stops,transfer_airports,duration_minutes,departure_time,arrival_time,is_best,provider
+2026-11-14T02:00:00+00:00,TPE,NRT,2026-12-01,9800,,BR,0,,185,08:40,12:45,True,google-flights
+2026-11-14T02:00:00+00:00,TPE,NRT,2026-12-01,11200,,CI,0,,190,09:15,13:25,False,google-flights
+2026-11-14T02:00:00+00:00,TPE,BKK,2026-12-17,8600,,BR,0,,215,07:30,10:05,True,google-flights
+2026-11-14T02:00:00+00:00,TPE,BKK,2026-12-17,9200,,CI,0,,220,08:00,10:40,False,google-flights
+2026-11-15T02:00:00+00:00,TPE,NRT,2026-12-01,9500,,BR,0,,185,08:40,12:45,True,google-flights
+2026-11-15T02:00:00+00:00,TPE,NRT,2026-12-01,10800,,CI,0,,190,09:15,13:25,False,google-flights
+2026-11-15T02:00:00+00:00,TPE,BKK,2026-12-17,8800,,BR,0,,215,07:30,10:05,True,google-flights
+2026-11-15T02:00:00+00:00,TPE,BKK,2026-12-17,9400,,CI,0,,220,08:00,10:40,False,google-flights
+2026-11-16T02:00:00+00:00,TPE,NRT,2026-12-01,5988,,BR,0,,185,08:40,12:45,True,google-flights
+2026-11-16T02:00:00+00:00,TPE,NRT,2026-12-01,6300,,JX,0,,190,10:05,14:15,False,google-flights
+2026-11-16T02:00:00+00:00,TPE,NRT,2026-12-01,9600,,CI,1,,420,06:00,14:00,False,google-flights
+2026-11-16T02:00:00+00:00,TPE,BKK,2026-12-17,8600,,BR,0,,215,07:30,10:05,True,google-flights
+2026-11-16T02:00:00+00:00,TPE,BKK,2026-12-17,9100,,VN,1,,395,09:40,16:15,False,google-flights
+2026-11-16T02:00:00+00:00,TPE,SGN,2027-01-15,7200,,VN,0,,205,07:45,10:10,True,google-flights
+2026-11-16T07:25:40+00:00,FRA,HKG,2026-11-30,450,EUR,Finnair,1,HEL Flughafen Helsinki-Vantaa,1895,11:30,19:05,False,google-flights
+2026-11-16T07:25:40+00:00,FRA,HKG,2026-11-30,610,EUR,MIAT,1,UBN New Ulaanbaatar International Airport,1335,13:35,11:50,False,google-flights
+2026-11-16T07:25:40+00:00,FRA,HKG,2026-11-30,643,EUR,THAI,1,BKK Flughafen Bangkok-Suvarnabhumi,1355,20:55,19:30,False,google-flights
+2026-11-16T07:25:40+00:00,FRA,HKG,2026-11-30,647,EUR,China Airlines,1,TPE Flughafen Taiwan Taoyuan,1390,11:00,10:10,False,google-flights
+2026-11-16T07:25:40+00:00,FRA,HKG,2026-11-30,1001,EUR,Lufthansa,0,,1120,21:50,16:30,False,google-flights
+2026-11-16T07:25:40+00:00,FRA,HKG,2027-01-15,364,EUR,China Southern,1,URC Flughafen Ürümqi-Diwopu,2635,19:40,15:35,False,google-flights
+2026-11-16T07:25:40+00:00,FRA,HKG,2027-01-15,631,EUR,Turkish Airlines,1,IST Istanbul Airport,1370,18:15,17:05,False,google-flights
+2026-11-16T07:25:40+00:00,FRA,HKG,2027-01-15,689,EUR,THAI,1,BKK Flughafen Bangkok-Suvarnabhumi,1355,20:55,19:30,False,google-flights
+2026-11-16T07:25:40+00:00,FRA,HKG,2027-01-15,713,EUR,Emirates,1,DXB Flughafen Dubai,1455,14:30,14:45,False,google-flights
+2026-11-16T07:25:40+00:00,FRA,HKG,2027-01-15,1003,EUR,Lufthansa,0,,1120,21:50,16:30,False,google-flights
