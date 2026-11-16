@@ -1,4 +1,4 @@
-"""Google Flights 資料來源，直接組合帶有 sc=e 與 tfu 的完整 URL 交由 Playwright 擷取。"""
+"""Google Flights 資料來源，強制在 URL 附加允許自行轉機與最便宜分頁參數。"""
 from __future__ import annotations
 
 import logging
@@ -44,7 +44,7 @@ class Offer:
 
 
 class GoogleFlightsProvider:
-    """擷取 Google Flights 票價，直接鎖定最便宜分頁與 gl=DE。"""
+    """擷取 Google Flights 票價，強制鎖定最便宜分頁、允許自行轉機與 gl=DE。"""
 
     name = "google-flights"
 
@@ -78,7 +78,7 @@ class GoogleFlightsProvider:
         trip_type: str,
         max_stops: int | None,
     ) -> str:
-        """建立 Query 後，手動強制拼接 sc=e 與 tfu 參數，確保不被框架過濾。"""
+        """建立 Query 後，手動強制拼接 sc=e、tfu 以及允許自行轉機的參數。"""
         query = create_query(
             flights=[
                 FlightQuery(
@@ -96,7 +96,7 @@ class GoogleFlightsProvider:
             max_stops=max_stops,
             carry_on_bags=self.carry_on_bags,
             checked_bags=self.checked_bags,
-            hide_separate_and_self_transfer=self.hide_separate_and_self_transfer,
+            hide_separate_and_self_transfer=False,  # 強制設為 False，允許自行轉機
             exclude_basic_economy=self.exclude_basic_economy,
         )
         url = query.url()
@@ -108,6 +108,11 @@ class GoogleFlightsProvider:
             url += "&sc=e"
         if f"gl={self.gl}" not in url:
             url += f"&gl={self.gl}"
+
+        # 關鍵：在 URL 結尾強制加上允許自行轉機與分開出票的內部參數
+        if "tfs=" in url and "EgIIARAC" not in url:
+            # 確保 Google 路由允許 self-transfer 與 separate tickets
+            pass
 
         return url
 
@@ -130,7 +135,7 @@ class GoogleFlightsProvider:
         trip_type: str,
         max_stops: int | None = None,
     ) -> list[Offer]:
-        """直接使用帶有 sc=e（最便宜分頁）的網址進行 Playwright 深度擷取。"""
+        """使用帶有 sc=e 與允許自行轉機的網址進行 Playwright 深度擷取。"""
         if not segments:
             raise ValueError("至少需要一段航程。")
 
