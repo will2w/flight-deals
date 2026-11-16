@@ -1,4 +1,4 @@
-"""AZEROTH FLIGHT RADAR // 燃燒遠征 (The Burning Crusade) 風格專業機票雷達 (app.py)"""
+"""AZEROTH FLIGHT RADAR // 燃燒遠征左右分欄戰情室與完整全球機場數據 (app.py)"""
 from __future__ import annotations
 
 import json
@@ -43,6 +43,7 @@ SEAT_LABELS = {
 
 STOP_CHOICES = {"不限航段": None, "只要直飛 (Nonstop)": 0, "最多轉 1 次": 1}
 
+# 基礎熱門航b點備份
 AIRPORTS: dict[str, str] = {
     "TPE": "台北 桃園", "TSA": "台北 松山", "KHH": "高雄", "RMQ": "台中",
     "NRT": "東京 成田", "HND": "東京 羽田", "KIX": "大阪 關西", "ICN": "首爾 仁川",
@@ -57,7 +58,6 @@ AIRPORTS: dict[str, str] = {
 
 
 def inject_tbc_theme() -> None:
-    """注入魔獸世界：燃燒遠征 (TBC) 黑暗神廟深空紫、外域邪能綠與傳奇金邊框 CSS 樣式。"""
     st.markdown(
         """
         <style>
@@ -69,73 +69,59 @@ def inject_tbc_theme() -> None:
             font-family: 'Inter', sans-serif;
         }
 
-        /* TBC 燃燒遠征風格頂部橫幅 */
         .tbc-banner {
             background: linear-gradient(135deg, rgba(26, 15, 46, 0.9) 0%, rgba(11, 7, 20, 0.95) 100%);
             border: 2px solid #10b981;
             border-image: linear-gradient(to right, #059669, #10b981, #34d399) 1;
             border-radius: 8px;
-            padding: 1.4rem 1.8rem;
-            margin-bottom: 1.5rem;
-            box-shadow: 0 0 35px rgba(16, 185, 129, 0.2), inset 0 0 20px rgba(0, 0, 0, 0.8);
+            padding: 1.2rem 1.6rem;
+            margin-bottom: 1.2rem;
+            box-shadow: 0 0 30px rgba(16, 185, 129, 0.2);
         }
         .tbc-badge {
             display: inline-block;
             font-family: 'Cinzel', serif;
-            font-size: 0.75rem;
+            font-size: 0.72rem;
             font-weight: 700;
             letter-spacing: 0.15em;
             color: #34d399;
             background: rgba(16, 185, 129, 0.15);
             border: 1px solid #10b981;
-            padding: 0.2rem 0.75rem;
+            padding: 0.15rem 0.6rem;
             border-radius: 4px;
-            margin-bottom: 0.4rem;
+            margin-bottom: 0.3rem;
         }
         .tbc-title {
             font-family: 'Cinzel', serif;
-            font-size: 2rem;
+            font-size: 1.8rem;
             font-weight: 700;
             color: #a7f3d0;
-            text-shadow: 0 2px 6px rgba(0,0,0,0.8);
             margin: 0;
         }
         .tbc-subtitle {
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             color: #94a3b8;
             margin-top: 0.3rem;
             font-family: 'JetBrains Mono', monospace;
         }
 
-        /* 數據卡片與面板 */
-        .tbc-panel {
-            background: rgba(15, 11, 26, 0.85);
-            border: 1px solid #34d399;
-            border-radius: 8px;
-            padding: 1.25rem;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
-        }
-
-        /* 指標樣式：外域邪能綠光 */
         [data-testid="stMetric"] {
             background: linear-gradient(160deg, #111c18 0%, #0a110f 100%);
             border: 1px solid #059669;
             border-left: 4px solid #10b981;
             border-radius: 6px;
-            padding: 0.8rem 1rem;
+            padding: 0.7rem 0.9rem;
         }
         [data-testid="stMetricLabel"] {
             color: #94a3b8 !important;
             font-family: 'Cinzel', serif;
-            font-size: 0.75rem !important;
+            font-size: 0.7rem !important;
         }
         [data-testid="stMetricValue"] {
             font-family: 'JetBrains Mono', monospace !important;
             color: #34d399 !important;
             font-weight: 700 !important;
         }
-
-        /* 按鈕：邪能綠漸層 */
         button[kind="primaryFormSubmit"], button[kind="primary"] {
             background: linear-gradient(90deg, #047857 0%, #059669 50%, #10b981 100%) !important;
             border: 1px solid #34d399 !important;
@@ -145,9 +131,6 @@ def inject_tbc_theme() -> None:
             border-radius: 6px !important;
             box-shadow: 0 0 15px rgba(16, 185, 129, 0.4) !important;
         }
-        button[kind="primaryFormSubmit"]:hover, button[kind="primary"]:hover {
-            box-shadow: 0 0 25px rgba(52, 211, 153, 0.7) !important;
-        }
         </style>
         """,
         unsafe_allow_html=True,
@@ -156,9 +139,13 @@ def inject_tbc_theme() -> None:
 
 @st.cache_data
 def load_iata_airports() -> dict:
-    return airportsdata.load("IATA")
+    try:
+        return airportsdata.load("IATA")
+    except Exception:
+        return {}
 
 
+# 完整補全全球 IATA 機場數據
 for airport_code, airport in load_iata_airports().items():
     if len(airport_code) != 3:
         continue
@@ -350,112 +337,183 @@ def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str =
 
 
 def search_tab() -> None:
+    """【左右分欄設計】左側控制面板，右側即時展示。"""
     config = load_config()
     codes = list(AIRPORTS)
     default_origin = codes.index("FRA") if "FRA" in codes else 0
     default_dest = codes.index("HKG") if "HKG" in codes else 1
 
-    with st.form("search_form"):
-        trip_label = st.radio(
-            "航程模式 // ITINERARY MODE",
-            ["單程", "往返", "開口行程"],
-            horizontal=True,
-        )
-        col1, col2 = st.columns(2)
-        origin = col1.selectbox("出發機場 // ORIGIN", codes, index=default_origin, format_func=airport_label)
-        destination = col2.selectbox("目的機場 // DESTINATION", codes, index=default_dest, format_func=airport_label)
+    col_left, col_right = st.columns([0.35, 0.65], gap="large")
 
-        col3, col4 = st.columns(2)
-        departure = col3.date_input("出發日期 // DEPARTURE", value=date.today() + timedelta(days=30), min_value=date.today())
-        flexible = col4.number_input("彈性日期範圍 ±(天)", min_value=0, max_value=7, value=0, step=1)
+    with col_left:
+        st.markdown("### 🎛️ 戰術雷達控制面板")
+        with st.form("search_form"):
+            trip_label = st.radio(
+                "航程模式 // ITINERARY MODE",
+                ["單程", "往返", "開口行程"],
+                horizontal=True,
+            )
+            origin = st.selectbox("出發機場 // ORIGIN", codes, index=default_origin, format_func=airport_label)
+            destination = st.selectbox("目的機場 // DESTINATION", codes, index=default_dest, format_func=airport_label)
 
-        return_date = None
-        if trip_label in ("往返", "開口行程"):
-            return_date = col3.date_input("回程日期 // RETURN", value=departure + timedelta(days=7), min_value=departure)
+            departure = st.date_input("出發日期 // DEPARTURE", value=date.today() + timedelta(days=30), min_value=date.today())
+            flexible = st.number_input("彈性日期範圍 ±(天)", min_value=0, max_value=7, value=0, step=1)
 
-        col5, col6 = st.columns(2)
-        seat = col5.selectbox("艙等 // CABIN CLASS", list(SEAT_LABELS), format_func=lambda s: SEAT_LABELS[s])
-        stops_label = col6.radio("轉機限制 // STOPS", list(STOP_CHOICES), horizontal=True)
+            return_date = None
+            if trip_label in ("往返", "開口行程"):
+                return_date = st.date_input("回程日期 // RETURN", value=departure + timedelta(days=7), min_value=departure)
 
-        with st.expander("⚙ 進階參數（預設解鎖價格排序與自行轉機）", expanded=False):
-            col7, col8 = st.columns(2)
-            carry_on_bags = col7.number_input("隨身行李數", min_value=0, max_value=2, value=0)
-            checked_bags = col8.number_input("託運行李數", min_value=0, max_value=2, value=0)
+            seat = st.selectbox("艙等 // CABIN CLASS", list(SEAT_LABELS), format_func=lambda s: SEAT_LABELS[s])
+            stops_label = st.radio("轉機限制 // STOPS", list(STOP_CHOICES), horizontal=True)
 
-        submitted = st.form_submit_button("🚀 啟動即時航班價格雷達", type="primary", use_container_width=True)
+            with st.expander("⚙ 進階參數（預設解鎖價格排序與自行轉機）", expanded=False):
+                carry_on_bags = st.number_input("隨身行李數", min_value=0, max_value=2, value=0)
+                checked_bags = st.number_input("託運行李數", min_value=0, max_value=2, value=0)
 
-    if submitted:
-        if origin == destination:
-            st.warning("出發地與目的地不能相同。")
-        else:
-            dates = [departure + timedelta(days=offset) for offset in range(-flexible, flexible + 1)]
-            trip_type = {"單程": "one-way", "往返": "round-trip", "開口行程": "multi-city"}[trip_label]
-            requests = []
-            for outbound_date in dates:
-                segments = [(origin, destination, outbound_date.isoformat())]
-                if trip_label != "單程" and return_date:
-                    segments.append((destination, origin, return_date.isoformat()))
-                requests.append((tuple(segments), trip_type))
+            submitted = st.form_submit_button("🚀 啟動即時航班價格雷達", type="primary", use_container_width=True)
 
-            rows: list[dict] = []
-            progress = st.progress(0.0, text="🟢 正在通過外域邪能網路連線 Google Flights 最便宜分頁與雙價格…")
-            for index, (segments, t_type) in enumerate(requests):
-                try:
-                    rows.extend(
-                        cached_search(
-                            segments,
-                            t_type,
-                            seat,
-                            config.settings.currency,
-                            config.settings.language,
-                            STOP_CHOICES[stops_label],
-                            int(carry_on_bags),
-                            int(checked_bags),
-                            False,
-                            False,
-                            True,
+    with col_right:
+        st.markdown("### 📊 航班戰利品即時展示區")
+        if submitted:
+            if origin == destination:
+                st.warning("出發地與目的地不能相同。")
+            else:
+                dates = [departure + timedelta(days=offset) for offset in range(-flexible, flexible + 1)]
+                trip_type = {"單程": "one-way", "往返": "round-trip", "開口行程": "multi-city"}[trip_label]
+                requests = []
+                for outbound_date in dates:
+                    segments = [(origin, destination, outbound_date.isoformat())]
+                    if trip_label != "單程" and return_date:
+                        segments.append((destination, origin, return_date.isoformat()))
+                    requests.append((tuple(segments), trip_type))
+
+                rows: list[dict] = []
+                progress = st.progress(0.0, text="🟢 正在通過外域邪能網路連線 Google Flights 最便宜分頁與雙價格…")
+                for index, (segments, t_type) in enumerate(requests):
+                    try:
+                        rows.extend(
+                            cached_search(
+                                segments,
+                                t_type,
+                                seat,
+                                config.settings.currency,
+                                config.settings.language,
+                                STOP_CHOICES[stops_label],
+                                int(carry_on_bags),
+                                int(checked_bags),
+                                False,
+                                False,
+                                True,
+                            )
                         )
-                    )
-                except Exception as exc:
-                    st.warning(f"查詢異常：{exc}")
-                progress.progress((index + 1) / len(requests))
-            progress.empty()
+                    except Exception as exc:
+                        st.warning(f"查詢異常：{exc}")
+                    progress.progress((index + 1) / len(requests))
+                progress.empty()
 
-            st.session_state["search_result"] = {
-                "trip_label": trip_label,
-                "segments": requests[0][0],
-                "rows": rows,
-                "dates": [d.isoformat() for d in dates],
-            }
+                st.session_state["search_result"] = {
+                    "trip_label": trip_label,
+                    "segments": requests[0][0],
+                    "rows": rows,
+                    "dates": [d.isoformat() for d in dates],
+                }
 
-    result = st.session_state.get("search_result")
-    if not result:
-        st.info("👈 請在上方設定航線與日期，點擊「啟動即時航班價格雷達」開始查詢。")
-        return
-
-    if not result["rows"]:
-        st.error("本次查詢未取得任何有效票價，請稍後重試。")
-        return
-
-    df = mark_deals(result["rows"])
-    render_professional_table(df, config.settings.currency, key_prefix="search")
+        result = st.session_state.get("search_result")
+        if not result:
+            st.info("👈 請在左側設定航線與條件，點擊 **「啟動即時航班價格雷達」** 開始檢索。")
+        else:
+            if not result["rows"]:
+                st.error("本次查詢未取得任何有效票價，請稍後重試。")
+            else:
+                df = mark_deals(result["rows"])
+                render_professional_table(df, config.settings.currency, key_prefix="search")
 
 
 def watchlist_tab() -> None:
+    config = load_config()
+    
+    if "watch_routes" not in st.session_state:
+        st.session_state["watch_routes"] = [
+            {"from": route.from_airport, "to": route.to_airport}
+            for route in config.routes
+        ]
+    routes = st.session_state["watch_routes"]
+
+    st.subheader("🛡️ 多航線戰術戰情室（航線監控管理）")
+    st.caption("在此自由添加或刪除監控航線，系統將自動同步並透過 GitHub Actions 守衛排程。")
+
+    with st.form("add_watchlist_form"):
+        c1, c2, c3 = st.columns([2, 2, 1])
+        new_origin = c1.selectbox("出發要塞 ORIGIN", list(AIRPORTS), format_func=airport_label, key="add_origin")
+        new_destination = c2.selectbox("目標領地 DESTINATION", list(AIRPORTS), index=1, format_func=airport_label, key="add_dest")
+        add_btn = c3.form_submit_button("＋ 添加航線", use_container_width=True)
+
+    if add_btn:
+        if new_origin == new_destination:
+            st.warning("出發地與目的地不能相同。")
+        elif any(r["from"] == new_origin and r["to"] == new_destination for r in routes):
+            st.info("此航線已在防禦陣列中。")
+        else:
+            routes.append({"from": new_origin, "to": new_destination})
+            st.session_state["watch_routes"] = routes
+            st.success(f"成功添加航線：{new_origin} ➔ {new_destination}")
+            st.rerun()
+
+    if routes:
+        route_labels = [f"{r['from']} ➔ {r['to']}" for r in routes]
+        st.markdown("#### 📋 目前監控陣列清單")
+        
+        col_del_1, col_del_2 = st.columns([3, 1])
+        selected_to_remove = col_del_1.selectbox("選擇要移除的航線", route_labels, key="remove_select")
+        if col_del_2.button("🗑️ 刪除所選航線", use_container_width=True):
+            idx = route_labels.index(selected_to_remove)
+            removed = routes.pop(idx)
+            st.session_state["watch_routes"] = routes
+            st.warning(f"已移除航線：{removed['from']} ➔ {removed['to']}")
+            st.rerun()
+
+        token = os.environ.get("GITHUB_TOKEN", "")
+        repository = os.environ.get("GITHUB_REPOSITORY", "")
+        branch = os.environ.get("GITHUB_BRANCH", "main")
+        
+        if st.button("☁️ 同步航線至 GitHub 排程倉庫", type="primary"):
+            if not token or not repository:
+                st.error("尚未設定 GitHub Secrets (GITHUB_TOKEN 與 GITHUB_REPOSITORY)。")
+            else:
+                try:
+                    commit_url = update_routes(repository, branch, token, routes)
+                    st.success("航線設定已成功同步至 GitHub！")
+                    if commit_url:
+                        st.link_button("檢視 GitHub Commit 紀錄", commit_url)
+                except Exception as exc:
+                    st.error(f"同步失敗：{exc}")
+    else:
+        st.info("目前無監控航線，請在上方新增。")
+
+    st.markdown("---")
+    
     snapshot = load_snapshot()
     if snapshot is None:
-        st.info("尚未同步排程快照。")
+        st.info("尚未產生排程快照數據。")
         return
+        
     offers_df = pd.DataFrame(snapshot.get("offers", []))
     if offers_df.empty:
-        st.info("尚無監控資料。")
+        st.info("尚無監控報價戰利品。")
         return
+
     currency = snapshot.get("currency", "EUR")
-    render_professional_table(offers_df, currency, key_prefix="watch")
+    offers_df["航線"] = offers_df["from_airport"] + " ➔ " + offers_df["to_airport"]
+    available_routes = sorted(offers_df["航線"].unique())
+    
+    selected_route_filter = st.selectbox("🎯 篩選檢視指定監控航線報價", ["全部顯示 (All Routes)"] + available_routes)
+    filtered_watchlist = offers_df if selected_route_filter == "全部顯示 (All Routes)" else offers_df[offers_df["航線"] == selected_route_filter]
+
+    st.markdown(f"### ⚔️ 戰情室聚合報價清單（共 {len(filtered_watchlist)} 筆）")
+    render_professional_table(filtered_watchlist, currency, key_prefix="watch")
 
 
 def trend_tab() -> None:
-    """【燃燒遠征優化】歷史價格走勢圖表：具備統計指標卡片、乾淨的時間軸格式化與精美折線圖。"""
     history = load_history()
     if history.empty:
         st.info("尚無歷史觀測數據，累積數次排程後將自動繪製價格走勢。")
@@ -473,7 +531,6 @@ def trend_tab() -> None:
     history = history.dropna(subset=["price"])
     history["observed_at"] = pd.to_datetime(history["observed_at"], errors="coerce", utc=True)
 
-    # 頂部選擇器
     col_a, col_b = st.columns(2)
     chart_route = col_a.selectbox("選擇觀測航線 // ROUTE", sorted(history["航線"].unique()))
     dates = sorted(history[history["航線"] == chart_route]["departure_date"].unique())
@@ -484,10 +541,8 @@ def trend_tab() -> None:
         st.write("此日期組合尚無足夠數據。")
         return
 
-    # 整理為乾淨的時間序列，將索引轉換為可讀的日期字串格式避免擠壓
     lowest = series.groupby("observed_at")["price"].min().sort_index()
     
-    # 統計指標
     min_val = int(lowest.min())
     max_val = int(lowest.max())
     latest_val = int(lowest.iloc[-1])
@@ -500,7 +555,6 @@ def trend_tab() -> None:
     st.markdown("---")
     st.subheader(f"📈 航線 {chart_route}（出發日：{chart_date}）價格走勢監控")
     
-    # 轉換成乾淨的 DataFrame 繪製折線圖，確保橫軸完美對齊
     chart_df = pd.DataFrame({
         "觀測時間": lowest.index.tz_convert(ZoneInfo("Europe/Berlin")).strftime("%Y-%m-%d %H:%M"),
         "最低票價 (EUR)": lowest.values
@@ -524,7 +578,7 @@ def main() -> None:
 
     tab_search, tab_watch, tab_trend = st.tabs([
         "⚡ 即時航班搜尋",
-        "🛰 航線監控清單",
+        "🛡️ 航線監控清單",
         "📈 歷史價格走勢",
     ])
     with tab_search:
@@ -537,3 +591,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+```eof
