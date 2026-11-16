@@ -1,4 +1,4 @@
-"""Playwright 深度擷取：強制點擊 Google Flights「Am günstigsten（最便宜）」分頁並解析所有低價。"""
+"""Playwright 全量深度擷取：強制切換最便宜分頁、暴力展開所有摺疊按鈕並抓出全部航班。"""
 from __future__ import annotations
 
 import logging
@@ -7,9 +7,9 @@ from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MAX_RESULTS = 80
-DEFAULT_SCROLL_COUNT = 15
-DEFAULT_WAIT_MS = 1200
+DEFAULT_MAX_RESULTS = 150
+DEFAULT_SCROLL_COUNT = 25
+DEFAULT_WAIT_MS = 1000
 
 _chromium_checked = False
 
@@ -69,7 +69,7 @@ def fetch_flights(
     scroll_count: int = DEFAULT_SCROLL_COUNT,
     headless: bool = True,
 ) -> list[PlaywrightFlight]:
-    """開啟 Google Flights 頁面、強制點擊「Am günstigsten」分頁、展開所有摺疊航班並解析。"""
+    """開啟 Google Flights 頁面、點擊最便宜分頁、展開所有摺疊區塊並抓出全部航班。"""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
@@ -77,7 +77,7 @@ def fetch_flights(
             "未安裝 playwright，請先執行 pip install playwright 與 playwright install chromium。"
         ) from exc
 
-    _ensure_chromium_checked()
+    _ensure_chromium_installed()
 
     flights: list[PlaywrightFlight] = []
     with sync_playwright() as p:
@@ -99,7 +99,7 @@ def fetch_flights(
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
                 "Chrome/131.0.0.0 Safari/537.36"
             ),
-            viewport={"width": 1366, "height": 960},
+            viewport={"width": 1440, "height": 1200},
         )
         context.add_init_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
@@ -107,30 +107,29 @@ def fetch_flights(
         page = context.new_page()
 
         try:
-            page.goto(query_url, wait_until="domcontentloaded", timeout=60000)
+            page.goto(query_url, wait_until="networkidle", timeout=60000)
             _dismiss_consent_dialog(page)
 
-            # 等待初始航班列表載入
             page.wait_for_selector("li", timeout=25000)
-            page.wait_for_timeout(2000)
+            page.wait_for_timeout(1500)
 
-            # 關鍵步驟：強制點擊頂部右側的「Am günstigsten / Cheapest（最便宜）」分頁
-            _click_cheapest_tab_safely(page)
+            # 1. 嘗試用 JS 強制點擊包含「Am günstigsten」或「Cheapest」的元素
+            _force_click_cheapest_tab(page)
+            page.wait_for_timeout(1500)
 
-            # 展開所有摺疊的「顯示更多航班」
-            _click_show_more(page)
-
+            # 2. 循環捲動 + 暴力展開所有「顯示更多航班 / Weitere Flüge」按鈕直到全開
             prev_count = 0
             stagnant_rounds = 0
             for _ in range(scroll_count):
-                page.mouse.wheel(0, 4500)
+                _expand_all_hidden_flights(page)
+                page.evaluate("window.scrollBy(0, 3000)")
                 page.wait_for_timeout(DEFAULT_WAIT_MS)
-                _click_show_more(page)
+                _expand_all_hidden_flights(page)
 
                 current = _count_visible_cards(page)
                 if current <= prev_count:
                     stagnant_rounds += 1
-                    if stagnant_rounds >= 2 and current > 0:
+                    if stagnant_rounds >= 3 and current > 0:
                         break
                 else:
                     stagnant_rounds = 0
@@ -149,7 +148,7 @@ def fetch_flights(
         finally:
             browser.close()
 
-    # 去重並依最低價格排序
+    # 去重並嚴格依最低價格排序
     seen: set[tuple] = set()
     unique: list[PlaywrightFlight] = []
     for f in flights:
@@ -176,42 +175,50 @@ def _dismiss_consent_dialog(page) -> None:
         pass
 
 
-def _click_cheapest_tab_safely(page) -> None:
-    """精準定位並點擊「Am günstigsten（最便宜）」按鈕或區塊。"""
+def _force_click_cheapest_tab(page) -> None:
+    """透過 DOM 遍歷與真實滑鼠點擊，強制切換至「Am günstigsten（最便宜）」分頁。"""
     try:
-        # 方法 1：尋找包含「Am günstigsten」或「ab [金額] €」的按鈕／區塊
-        candidates = page.locator("text=/Am günstigsten/i")
-        if candidates.count() > 0:
-            for i in range(candidates.count()):
-                el = candidates.nth(i)
-                if el.is_visible():
-                    el.click(timeout=3000)
-                    page.wait_for_timeout(2000)
-                    log.info("已成功點擊「Am günstigsten」分頁。")
-                    return
-        
-        # 方法 2：透過座標或點擊第二個分頁籤
-        tabs = page.locator("div[role='tab']")
-        if tabs.count() >= 2:
-            tabs.nth(1).click(timeout=3000)
-            page.wait_for_timeout(2000)
-    except Exception as exc:
-        log.debug("點擊最便宜分頁時略過：%s", exc)
-
-
-def _click_show_more(page) -> None:
-    """展開所有摺疊的「其他航班 / 顯示更多航班」區塊。"""
-    try:
-        buttons = page.get_by_role(
-            "button",
-            name=re.compile(
-                r"(?i)(weitere flüge|mehr flüge|more flights|show more|günstigere|cheaper|顯示更多|更多航班)"
-            ),
+        clicked = page.evaluate(
+            """() => {
+                const els = Array.from(document.querySelectorAll('div[role="tab"], button, span, div'));
+                const target = els.find(el => {
+                    const t = (el.innerText || '').trim();
+                    return /^Am günstigsten/i.test(t) || /^Cheapest/i.test(t);
+                });
+                if (target) {
+                    target.click();
+                    const tabParent = target.closest('[role="tab"]');
+                    if (tabParent) tabParent.click();
+                    return true;
+                }
+                return false;
+            }"""
         )
-        for btn in buttons.all():
-            if btn.is_visible():
-                btn.click(timeout=2500)
-                page.wait_for_timeout(1000)
+        if clicked:
+            log.info("已透過 DOM 強制點擊「Am günstigsten」分頁。")
+    except Exception as exc:
+        log.debug("DOM 點擊最便宜分頁時略過：%s", exc)
+
+
+def _expand_all_hidden_flights(page) -> None:
+    """無差別點擊畫面上所有「顯示更多航班 / 其他航班 / 較便宜選項」摺疊按鈕。"""
+    try:
+        page.evaluate(
+            """() => {
+                const keywords = [
+                    'weitere flüge', 'mehr flüge', 'andere flüge',
+                    'more flights', 'show more', 'view more',
+                    'günstigere', 'cheaper', '顯示更多', '更多航班', '其他航班'
+                ];
+                const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
+                for (const btn of buttons) {
+                    const txt = (btn.innerText || btn.getAttribute('aria-label') || '').toLowerCase();
+                    if (keywords.some(kw => txt.includes(kw))) {
+                        btn.click();
+                    }
+                }
+            }"""
+        )
     except Exception:
         pass
 
