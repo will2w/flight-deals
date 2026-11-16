@@ -1,5 +1,5 @@
-"""Google Flights 資料來源，預設啟用 Playwright 切換「價格從低到高」排序與展開隱藏低價。"""
-from __future__ import annotations
+"""Google Flights 資料來源，強制帶入 sc=e 與 tfu=EgoIABAAGAAgAigB 直接鎖定「最便宜」分頁。"""
+from __future -> annotations
 
 import logging
 from dataclasses import asdict, dataclass, field
@@ -14,6 +14,9 @@ from fast_flights import (
 )
 
 log = logging.getLogger(__name__)
+
+# 強制 Google Flights 直接開啟「Am günstigsten（最便宜）」分頁與價格排序的參數
+CHEAPEST_SORT_TFU = "EgoIABAAGAAgAigB"
 
 
 @dataclass
@@ -43,7 +46,7 @@ class Offer:
 
 
 class GoogleFlightsProvider:
-    """擷取 Google Flights 票價，預設直接按「價格從低到高」排序抓取並補全 gl=DE。"""
+    """擷取 Google Flights 票價，強制鎖定最便宜分頁與 gl=DE。"""
 
     name = "google-flights"
 
@@ -71,13 +74,13 @@ class GoogleFlightsProvider:
         self.playwright_max_results = playwright_max_results
         self.gl = gl
 
-    def _build_query_with_gl(
+    def _build_query_with_cheapest_params(
         self,
         segments: list[tuple[str, str, str]],
         trip_type: str,
         max_stops: int | None,
     ):
-        """建立 fast-flights Query 物件，並為其 url() 方法自動注入 gl 市場參數。"""
+        """建立 Query 並強制注入 sc=e（最便宜分頁）、tfu 與 gl=DE。"""
         query = create_query(
             flights=[
                 FlightQuery(
@@ -100,14 +103,21 @@ class GoogleFlightsProvider:
         )
         original_url_fn = query.url
 
-        def url_with_gl() -> str:
-            base_url = original_url_fn()
-            if "gl=" not in base_url and self.gl:
-                sep = "&" if "?" in base_url else "?"
-                return f"{base_url}{sep}gl={self.gl}"
-            return base_url
+        def enhanced_url() -> str:
+            url = original_url_fn()
+            url = url.replace("/travel/flights?", "/travel/flights/search?")
+            if "tfu=" not in url:
+                sep = "&" if "?" in url else "?"
+                url = f"{url}{sep}tfu={CHEAPEST_SORT_TFU}"
+            if "sc=e" not in url:
+                sep = "&" if "?" in url else "?"
+                url = f"{url}{sep}sc=e"
+            if "gl=" not in url and self.gl:
+                sep = "&" if "?" in url else "?"
+                url = f"{url}{sep}gl={self.gl}"
+            return url
 
-        query.url = url_with_gl  # type: ignore[method-assign]
+        query.url = enhanced_url  # type: ignore[method-assign]
         return query
 
     def search(
@@ -129,125 +139,105 @@ class GoogleFlightsProvider:
         trip_type: str,
         max_stops: int | None = None,
     ) -> list[Offer]:
-        """搜尋單程、往返或多航段行程（預設直接以 Playwright 切換價格排序抓取）。"""
+        """搜尋行程，優先走 Playwright，若 Playwright 失敗則強制用帶有 sc=e 的 URL 透過 HTTP 抓取。"""
         if not segments:
             raise ValueError("至少需要一段航程。")
 
         if trip_type == "multi-city":
             return self._search_multicity(segments, max_stops)
 
-        query = self._build_query_with_gl(segments, trip_type, max_stops)
+        query = self._build_query_with_cheapest_params(segments, trip_type, max_stops)
+        query_url = query.url()
 
-        # 預設直接走 Playwright 切換「價格從低到高」排序抓取
+        offers: list[Offer] = []
+        pw_error = ""
+
+        # 1. 優先嘗試 Playwright 深度擷取
         if self.use_playwright:
             try:
-                return self._search_with_playwright(
-                    query.url(), segments, trip_type, max_stops
-                )
-            except Exception as pw_exc:
-                log.warning("Playwright 價格排序擷取失敗 (%s)，嘗試退回 HTTP 快速擷取...", pw_exc)
+                from .playwright_fetcher import fetch_flights
+                flights = fetch_flights(query_url, max_results=self.playwright_max_results)
+                if flights:
+                    for flight in flights:
+                        if max_stops is not None and flight.stops > max_stops:
+                            continue
+                        if not flight.price or flight.price <= 0:
+                            continue
+                        origin, destination, departure_date = segments[0]
+                        return_date = segments[1][2] if len(segments) > 1 else None
+                        segment = {
+                            "from_airport": origin,
+                            "to_airport": destination,
+                            "departure_date": departure_date,
+                            "departure_time": flight.departure_time,
+                            "arrival_time": flight.arrival_time,
+                            "duration_minutes": flight.duration_minutes,
+                            "stops": flight.stops,
+                            "transfer_airports": flight.transfer_airports,
+                        }
+                        segments_data = [segment]
+                        if trip_type == "round-trip" and len(segments) > 1:
+                            ret_origin, ret_dest, ret_date = segments[1]
+                            segments_data.append(
+                                {
+                                    "from_airport": ret_origin,
+                                    "to_airport": ret_dest,
+                                    "departure_date": ret_date,
+                                    "departure_time": "",
+                                    "arrival_time": "",
+                                    "duration_minutes": 0,
+                                    "stops": 0,
+                                    "transfer_airports": [],
+                                }
+                            )
+                        offers.append(
+                            Offer(
+                                from_airport=origin,
+                                to_airport=destination,
+                                departure_date=departure_date,
+                                price=flight.price,
+                                currency=self.currency,
+                                trip_type=trip_type,
+                                price_basis="playwright_scroll_quote",
+                                return_date=return_date,
+                                segments=segments_data,
+                                airlines=flight.airlines,
+                                stops=flight.stops,
+                                transfer_airports=flight.transfer_airports,
+                                duration_minutes=flight.duration_minutes,
+                                departure_time=flight.departure_time,
+                                arrival_time=flight.arrival_time,
+                                is_best=flight.is_best,
+                                provider="google-flights-playwright",
+                            )
+                        )
+            except Exception as exc:
+                pw_error = str(exc)
+                log.warning("Playwright 擷取失敗 (%s)，切換至 HTTP 備援...", pw_error)
 
-        offers: list[Offer] = []
-        results = get_flights(query)
-        for item in results:
+        # 2. 若 Playwright 未取得結果，改用帶有 sc=e 的 fast-flights HTTP 模式補抓
+        if not offers:
             try:
-                if item.price is None:
-                    continue
-                offer = self._to_offer(
-                    item,
-                    segments,
-                    trip_type,
-                    self.currency,
-                    price_basis=(
-                        "fast_flights_round_trip_quote"
-                        if trip_type == "round-trip"
-                        else "fast_flights_quote"
-                    ),
-                )
-                offers.append(offer)
-            except ValueError as exc:
-                log.debug("略過不完整的航班結果：%s", exc)
+                results = get_flights(query)
+                for item in results:
+                    if item.price is None:
+                        continue
+                    offer = self._to_offer(
+                        item,
+                        segments,
+                        trip_type,
+                        self.currency,
+                        price_basis="fast_flights_quote_cheapest",
+                    )
+                    offers.append(offer)
+            except Exception as http_exc:
+                log.warning("HTTP 擷取亦失敗：%s", http_exc)
 
         if not offers:
-            raise ValueError("沒有取得任何可核對的完整航班行程。")
-
-        offers.sort(key=lambda o: o.price)
-        return offers
-
-    def _search_with_playwright(
-        self,
-        query_url: str,
-        segments: list[tuple[str, str, str]],
-        trip_type: str,
-        max_stops: int | None,
-    ) -> list[Offer]:
-        """使用 Playwright 切換價格排序、捲動並點擊「顯示更多航班」以擷取所有隱藏低價。"""
-        from .playwright_fetcher import fetch_flights
-
-        origin, destination, departure_date = segments[0]
-        return_date = segments[1][2] if len(segments) > 1 else None
-
-        flights = fetch_flights(
-            query_url,
-            max_results=self.playwright_max_results,
-        )
-        if not flights:
-            raise ValueError("Playwright 擷取未取得任何航班結果。")
-
-        offers: list[Offer] = []
-        for flight in flights:
-            if max_stops is not None and flight.stops > max_stops:
-                continue
-            if not flight.price or flight.price <= 0:
-                continue
-            segment = {
-                "from_airport": origin,
-                "to_airport": destination,
-                "departure_date": departure_date,
-                "departure_time": flight.departure_time,
-                "arrival_time": flight.arrival_time,
-                "duration_minutes": flight.duration_minutes,
-                "stops": flight.stops,
-                "transfer_airports": flight.transfer_airports,
-            }
-            segments_data = [segment]
-            if trip_type == "round-trip" and len(segments) > 1:
-                ret_origin, ret_dest, ret_date = segments[1]
-                segments_data.append(
-                    {
-                        "from_airport": ret_origin,
-                        "to_airport": ret_dest,
-                        "departure_date": ret_date,
-                        "departure_time": "",
-                        "arrival_time": "",
-                        "duration_minutes": 0,
-                        "stops": 0,
-                        "transfer_airports": [],
-                    }
-                )
-            offers.append(
-                Offer(
-                    from_airport=origin,
-                    to_airport=destination,
-                    departure_date=departure_date,
-                    price=flight.price,
-                    currency=self.currency,
-                    trip_type=trip_type,
-                    price_basis="playwright_scroll_quote",
-                    return_date=return_date,
-                    segments=segments_data,
-                    airlines=flight.airlines,
-                    stops=flight.stops,
-                    transfer_airports=flight.transfer_airports,
-                    duration_minutes=flight.duration_minutes,
-                    departure_time=flight.departure_time,
-                    arrival_time=flight.arrival_time,
-                    is_best=flight.is_best,
-                    provider="google-flights-playwright",
-                )
+            raise RuntimeError(
+                f"無法取得報價。Playwright 錯誤：{pw_error or '無'}；請檢查網路連線或容器相依性。"
             )
-        if not offers:
-            raise ValueError("Playwright 擷取結果中沒有符合轉機條件的航班。")
+
         offers.sort(key=lambda o: o.price)
         return offers
 
@@ -256,7 +246,6 @@ class GoogleFlightsProvider:
         segments: list[tuple[str, str, str]],
         max_stops: int | None,
     ) -> list[Offer]:
-        """分段查單程最低價，估算開口行程總價（擴大候選至前 8 名最低價）。"""
         choices = [
             self._search_single_segment(segment, max_stops)[:8]
             for segment in segments
