@@ -210,7 +210,7 @@ def _parse_card(card) -> PlaywrightFlight | None:
     if not combined_text:
         return None
 
-    # 【關鍵升級】：完美支援任意跨日標記（+1, +2, +3 等）
+    # 【關鍵修復】：支援任意跨日標記（+1, +2, +3 等）
     times = re.findall(r"(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})(?:\+\d+)?", inner_text)
     if not times:
         return None
@@ -286,7 +286,6 @@ def _extract_airlines(card, text: str) -> list[str]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     for line in lines:
         l_lower = line.lower()
-        # 過濾雜訊與自行轉機標籤行
         if any(kw in l_lower for kw in ["€", "eur", "std.", "min.", "co2", "stopp", "nonstop", "geschätzt", "kg", "durchschn", "eigener transfer", "flughafenwechsel"]):
             continue
         cleaned_line = re.sub(r"(?i)^(eigener transfer|self-transfer|separates ticket)\s*[·•\-]\s*", "", line).strip()
