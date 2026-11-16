@@ -1,4 +1,4 @@
-"""AERO-RADAR // 高效專業機票價格雷達與雙價格分析儀 (app.py)"""
+"""AERO-RADAR // 高資訊密度專業機票雷達與雙價格矩陣表格 (app.py)"""
 from __future__ import annotations
 
 import json
@@ -71,45 +71,6 @@ def inject_clean_theme() -> None:
             border-radius: 8px;
             padding: 1.2rem 1.5rem;
             margin-bottom: 1.2rem;
-        }
-        .flight-row-card {
-            background: #111827;
-            border: 1px solid #374151;
-            border-radius: 8px;
-            padding: 1rem 1.25rem;
-            margin-bottom: 0.75rem;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-        }
-        .flight-row-card:hover {
-            border-color: #0ea5e9;
-        }
-        .price-direct {
-            font-size: 1.4rem;
-            font-weight: 700;
-            color: #38bdf8;
-        }
-        .price-ota {
-            font-size: 1.1rem;
-            font-weight: 600;
-            color: #34d399;
-        }
-        .badge-deal {
-            background: rgba(239, 68, 68, 0.2);
-            border: 1px solid #ef4444;
-            color: #fca5a5;
-            padding: 0.1rem 0.5rem;
-            border-radius: 4px;
-            font-size: 0.75rem;
-            font-weight: 700;
-        }
-        .badge-self-transfer {
-            background: rgba(245, 158, 11, 0.2);
-            border: 1px solid #f59e0b;
-            color: #fcd34d;
-            padding: 0.1rem 0.5rem;
-            border-radius: 4px;
-            font-size: 0.75rem;
-            font-weight: 600;
         }
         </style>
         """,
@@ -226,12 +187,12 @@ def clean_airline_name(raw_airlines) -> str:
     return name.strip(" ,·-")
 
 
-def render_professional_dashboard(df: pd.DataFrame, currency: str, key_prefix: str = "search") -> None:
+def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str = "search") -> None:
+    """高資訊密度專業表格呈現：一口氣展現所有詳細資訊、雙價格與自行轉機。"""
     if df.empty:
         st.info("未偵測到符合條件的航班。")
         return
 
-    # 【安全防護】若 DataFrame 缺少 ota_price 欄位，自動補上空值以避免 KeyError
     if "ota_price" not in df.columns:
         df["ota_price"] = None
 
@@ -243,7 +204,6 @@ def render_professional_dashboard(df: pd.DataFrame, currency: str, key_prefix: s
     direct = view[view["stops"] == 0]
     deals_df = view[view["is_deal"] == True]
 
-    # 安全計算最低 OTA 價
     valid_ota = view["ota_price"].dropna()
     min_ota_str = f"€ {int(valid_ota.min()):,}" if not valid_ota.empty and valid_ota.min() > 0 else "無資料"
 
@@ -255,20 +215,9 @@ def render_professional_dashboard(df: pd.DataFrame, currency: str, key_prefix: s
 
     st.markdown("---")
 
-    col_f1, col_f2, col_f3 = st.columns(3)
-    only_deals = col_f1.checkbox("🔥 僅顯示特價推薦", value=False, key=f"{key_prefix}_deals")
-    only_direct = col_f2.checkbox("✈️ 僅顯示直飛航線", value=False, key=f"{key_prefix}_direct")
-    max_budget = col_f3.slider("最高預算 (EUR)", int(view["price"].min()), int(view["price"].max()), int(view["price"].max()), step=50, key=f"{key_prefix}_budget")
-
-    filtered = view[view["price"] <= max_budget]
-    if only_deals:
-        filtered = filtered[filtered["is_deal"] == True]
-    if only_direct:
-        filtered = filtered[filtered["stops"] == 0]
-
-    st.markdown(f"### 📋 完整報價清單（共 {len(filtered)} 筆結果，已按價格從低到高排序）")
-
-    for index, row in filtered.iterrows():
+    # 建立結構化表格清單資料
+    table_rows = []
+    for index, row in view.iterrows():
         price = int(row["price"])
         ota_price = row.get("ota_price")
         airlines = clean_airline_name(row.get("airlines"))
@@ -290,36 +239,36 @@ def render_professional_dashboard(df: pd.DataFrame, currency: str, key_prefix: s
         ] if isinstance(segments, list) else []
         
         transfer_desc = "直飛 (Nonstop)" if stops == 0 else f"{stops} 站 ({'、'.join(transfers_list)})"
-        
-        deal_badge = '<span class="badge-deal">🔥 特價 DEAL</span>' if row.get("is_deal") else ''
-        transfer_badge = '<span class="badge-self-transfer">🔄 自行轉機 (Eigener Transfer)</span>' if has_self_transfer else ''
+        if has_self_transfer:
+            transfer_desc += " [🔄 自行轉機]"
 
-        price_html = f'<span class="price-direct">€ {price:,}</span> <span style="font-size:0.8rem; color:#94a3b8;">(官網直銷)</span>'
+        # 雙價格顯示格式
+        price_display = f"€ {price:,} (直銷)"
         if pd.notna(ota_price) and ota_price > 0 and int(ota_price) < price:
-            price_html += f'&nbsp;&nbsp;|&nbsp;&nbsp;<span class="price-ota">€ {int(ota_price):,}</span> <span style="font-size:0.8rem; color:#34d399;">(OTA 代理商)</span>'
+            price_display = f"€ {price:,} (直) / € {int(ota_price):,} (OTA)"
 
-        st.markdown(
-            f"""
-            <div class="flight-row-card">
-                <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
-                    <div>
-                        <span style="font-size: 0.8rem; color: #94a3b8; font-weight: 600;">#{index+1}</span>
-                        &nbsp;{deal_badge}&nbsp;{transfer_badge}
-                        <div style="font-size: 1.05rem; font-weight: 700; color: #f8fafc; margin-top: 0.2rem;">{airlines}</div>
-                    </div>
-                    <div style="text-align: right;">
-                        <div>{price_html}</div>
-                    </div>
-                </div>
-                <div style="display: flex; justify-content: space-between; font-size: 0.88rem; color: #cbd5e1; border-top: 1px solid #1e293b; padding-top: 0.5rem; margin-top: 0.5rem;">
-                    <span><b>航線：</b> {row['from_airport']} ➔ {row['to_airport']} &nbsp;|&nbsp; <b>出發日：</b> {dep_date}</span>
-                    <span><b>時段：</b> {dep_time} – {arr_time} ({duration}) &nbsp;|&nbsp; <b>轉機：</b> {transfer_desc}</span>
-                </div>
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+        deal_tag = "🔥 DEAL" if row.get("is_deal") else "—"
 
+        table_rows.append({
+            "排名": index + 1,
+            "特價": deal_tag,
+            f"票價 ({currency})": price_display,
+            "直銷價(純數值)": price,
+            "航空公司": airlines,
+            "航線": f"{row['from_airport']} ➔ {row['to_airport']}",
+            "出發日": dep_date,
+            "起降時段": f"{dep_time} – {arr_time}",
+            "總時長": duration,
+            "轉機詳情": transfer_desc,
+        })
+
+    table_df = pd.DataFrame(table_rows)
+
+    # 顯示高資訊密度互動表格（隱藏內部排序數值欄位，保留乾淨介面）
+    display_df = table_df.drop(columns=["直銷價(純數值)"])
+    st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+    # 下載按鈕
     csv_data = view.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
         "⬇ 下載完整報價矩陣 CSV",
@@ -419,7 +368,7 @@ def search_tab() -> None:
         return
 
     df = mark_deals(result["rows"])
-    render_professional_dashboard(df, config.settings.currency, key_prefix="search")
+    render_professional_table(df, config.settings.currency, key_prefix="search")
 
 
 def watchlist_tab() -> None:
@@ -432,7 +381,7 @@ def watchlist_tab() -> None:
         st.info("尚無監控資料。")
         return
     currency = snapshot.get("currency", "EUR")
-    render_professional_dashboard(offers_df, currency, key_prefix="watch")
+    render_professional_table(offers_df, currency, key_prefix="watch")
 
 
 def trend_tab() -> None:
