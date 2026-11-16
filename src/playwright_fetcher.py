@@ -1,436 +1,382 @@
-"""Google Flights 資料來源，自動注入 tfu=EgoIABAAGAAgAigB（最便宜分頁與價格排序）及 gl=DE。"""
+"""Playwright 深度擷取：自動切換 Google Flights「Am günstigsten（最便宜）」頁籤與價格排序。"""
 from __future__ import annotations
 
 import logging
-from dataclasses import asdict, dataclass, field
-from datetime import datetime
-from itertools import product
-
-from fast_flights import (
-    FlightQuery,
-    Passengers,
-    create_query,
-    get_flights,
-)
+import re
+from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
 
-# Google Flights 強制切換至「Am günstigsten（最便宜）」+「按價格從低到高排序」的 Protobuf 參數
-CHEAPEST_SORT_TFU = "EgoIABAAGAAgAigB"
+DEFAULT_MAX_RESULTS = 80
+DEFAULT_SCROLL_COUNT = 15
+DEFAULT_WAIT_MS = 1200
+
+_chromium_checked = False
+
+
+def _ensure_chromium_installed() -> None:
+    """確保 Playwright Chromium 已安裝；首次使用時自動安裝。"""
+    global _chromium_checked
+    if _chromium_checked:
+        return
+    import subprocess
+    import sys
+
+    from playwright.sync_api import sync_playwright
+
+    try:
+        with sync_playwright() as p:
+            p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage"],
+            ).close()
+        _chromium_checked = True
+        return
+    except Exception:
+        log.info("Chromium 未安裝，正在執行 playwright install chromium ...")
+        result = subprocess.run(
+            [sys.executable, "-m", "playwright", "install", "chromium"],
+            capture_output=True,
+            text=True,
+            timeout=300,
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                "Playwright Chromium 安裝失敗。請手動執行：playwright install chromium"
+            ) from None
+        _chromium_checked = True
 
 
 @dataclass
-class Offer:
-    """正規化後的單一行程報價。"""
+class PlaywrightFlight:
+    """從 DOM 解析出的單筆航班結果。"""
 
-    from_airport: str
-    to_airport: str
-    departure_date: str
-    price: int
-    currency: str = "EUR"
-    trip_type: str = "one-way"
-    price_basis: str = "fast_flights_quote"
-    return_date: str | None = None
-    segments: list[dict] = field(default_factory=list)
+    price: int | None = None
     airlines: list[str] = field(default_factory=list)
-    stops: int = 0
-    transfer_airports: list[str] = field(default_factory=list)
-    duration_minutes: int = 0
     departure_time: str = ""
     arrival_time: str = ""
+    duration_minutes: int = 0
+    stops: int = 0
+    transfer_airports: list[str] = field(default_factory=list)
+    from_airport: str = ""
+    to_airport: str = ""
     is_best: bool = False
-    provider: str = "google-flights"
-
-    def to_dict(self) -> dict:
-        return asdict(self)
 
 
-class GoogleFlightsProvider:
-    """擷取 Google Flights 票價，自動注入 tfu=EgoIABAAGAAgAigB 強制載入最便宜分頁並按價格排序。"""
-
-    name = "google-flights"
-
-    def __init__(
-        self,
-        currency: str = "EUR",
-        language: str = "de",
-        seat: str = "economy",
-        carry_on_bags: int = 0,
-        checked_bags: int = 0,
-        hide_separate_and_self_transfer: bool = False,
-        exclude_basic_economy: bool = False,
-        use_playwright: bool = True,
-        playwright_max_results: int = 80,
-        gl: str = "DE",
-    ):
-        self.currency = currency
-        self.language = language
-        self.seat = seat
-        self.carry_on_bags = carry_on_bags
-        self.checked_bags = checked_bags
-        self.hide_separate_and_self_transfer = hide_separate_and_self_transfer
-        self.exclude_basic_economy = exclude_basic_economy
-        self.use_playwright = use_playwright
-        self.playwright_max_results = playwright_max_results
-        self.gl = gl
-
-    def _build_query_with_cheapest_params(
-        self,
-        segments: list[tuple[str, str, str]],
-        trip_type: str,
-        max_stops: int | None,
-    ):
-        """建立 fast-flights Query 物件，並自動注入 tfu=EgoIABAAGAAgAigB（最便宜分頁）與 gl=DE。"""
-        query = create_query(
-            flights=[
-                FlightQuery(
-                    date=departure_date,
-                    from_airport=origin,
-                    to_airport=destination,
-                )
-                for origin, destination, departure_date in segments
-            ],
-            seat=self.seat,  # type: ignore[arg-type]
-            trip=trip_type,  # type: ignore[arg-type]
-            passengers=Passengers(adults=1),
-            language=self.language,
-            currency=self.currency,
-            max_stops=max_stops,
-            carry_on_bags=self.carry_on_bags,
-            checked_bags=self.checked_bags,
-            hide_separate_and_self_transfer=self.hide_separate_and_self_transfer,
-            exclude_basic_economy=self.exclude_basic_economy,
-        )
-        original_url_fn = query.url
-
-        def enhanced_url() -> str:
-            url = original_url_fn()
-            # 確保路徑為 /travel/flights/search 格式，以完整支援 tfu 排序參數
-            url = url.replace("/travel/flights?", "/travel/flights/search?")
-            if "tfu=" not in url:
-                sep = "&" if "?" in url else "?"
-                url = f"{url}{sep}tfu={CHEAPEST_SORT_TFU}"
-            if "gl=" not in url and self.gl:
-                sep = "&" if "?" in url else "?"
-                url = f"{url}{sep}gl={self.gl}"
-            return url
-
-        query.url = enhanced_url  # type: ignore[method-assign]
-        return query
-
-    def search(
-        self,
-        from_airport: str,
-        to_airport: str,
-        departure_date: str,
-        max_stops: int | None = None,
-    ) -> list[Offer]:
-        return self.search_itinerary(
-            [(from_airport, to_airport, departure_date)],
-            trip_type="one-way",
-            max_stops=max_stops,
-        )
-
-    def search_itinerary(
-        self,
-        segments: list[tuple[str, str, str]],
-        trip_type: str,
-        max_stops: int | None = None,
-    ) -> list[Offer]:
-        """搜尋單程、往返或多航段行程（預設直接載入最便宜分頁並按價格排序）。"""
-        if not segments:
-            raise ValueError("至少需要一段航程。")
-
-        if trip_type == "multi-city":
-            return self._search_multicity(segments, max_stops)
-
-        query = self._build_query_with_cheapest_params(segments, trip_type, max_stops)
-
-        if self.use_playwright:
-            try:
-                return self._search_with_playwright(
-                    query.url(), segments, trip_type, max_stops
-                )
-            except Exception as pw_exc:
-                log.warning("Playwright 擷取失敗 (%s)，嘗試退回 HTTP 快速擷取...", pw_exc)
-
-        offers: list[Offer] = []
-        results = get_flights(query)
-        for item in results:
-            try:
-                if item.price is None:
-                    continue
-                offer = self._to_offer(
-                    item,
-                    segments,
-                    trip_type,
-                    self.currency,
-                    price_basis=(
-                        "fast_flights_round_trip_quote"
-                        if trip_type == "round-trip"
-                        else "fast_flights_quote"
-                    ),
-                )
-                offers.append(offer)
-            except ValueError as exc:
-                log.debug("略過不完整的航班結果：%s", exc)
-
-        if not offers:
-            raise ValueError("沒有取得任何可核對的完整航班行程。")
-
-        offers.sort(key=lambda o: o.price)
-        return offers
-
-    def _search_with_playwright(
-        self,
-        query_url: str,
-        segments: list[tuple[str, str, str]],
-        trip_type: str,
-        max_stops: int | None,
-    ) -> list[Offer]:
-        """使用 Playwright 開啟已帶 tfu=EgoIABAAGAAgAigB 的網址，捲動並展開所有低價結果。"""
-        from .playwright_fetcher import fetch_flights
-
-        origin, destination, departure_date = segments[0]
-        return_date = segments[1][2] if len(segments) > 1 else None
-
-        flights = fetch_flights(
-            query_url,
-            max_results=self.playwright_max_results,
-        )
-        if not flights:
-            raise ValueError("Playwright 擷取未取得任何航班結果。")
-
-        offers: list[Offer] = []
-        for flight in flights:
-            if max_stops is not None and flight.stops > max_stops:
-                continue
-            if not flight.price or flight.price <= 0:
-                continue
-            segment = {
-                "from_airport": origin,
-                "to_airport": destination,
-                "departure_date": departure_date,
-                "departure_time": flight.departure_time,
-                "arrival_time": flight.arrival_time,
-                "duration_minutes": flight.duration_minutes,
-                "stops": flight.stops,
-                "transfer_airports": flight.transfer_airports,
-            }
-            segments_data = [segment]
-            if trip_type == "round-trip" and len(segments) > 1:
-                ret_origin, ret_dest, ret_date = segments[1]
-                segments_data.append(
-                    {
-                        "from_airport": ret_origin,
-                        "to_airport": ret_dest,
-                        "departure_date": ret_date,
-                        "departure_time": "",
-                        "arrival_time": "",
-                        "duration_minutes": 0,
-                        "stops": 0,
-                        "transfer_airports": [],
-                    }
-                )
-            offers.append(
-                Offer(
-                    from_airport=origin,
-                    to_airport=destination,
-                    departure_date=departure_date,
-                    price=flight.price,
-                    currency=self.currency,
-                    trip_type=trip_type,
-                    price_basis="playwright_scroll_quote",
-                    return_date=return_date,
-                    segments=segments_data,
-                    airlines=flight.airlines,
-                    stops=flight.stops,
-                    transfer_airports=flight.transfer_airports,
-                    duration_minutes=flight.duration_minutes,
-                    departure_time=flight.departure_time,
-                    arrival_time=flight.arrival_time,
-                    is_best=flight.is_best,
-                    provider="google-flights-playwright",
-                )
-            )
-        if not offers:
-            raise ValueError("Playwright 擷取結果中沒有符合轉機條件的航班。")
-        offers.sort(key=lambda o: o.price)
-        return offers
-
-    def _search_multicity(
-        self,
-        segments: list[tuple[str, str, str]],
-        max_stops: int | None,
-    ) -> list[Offer]:
-        """分段查單程最低價，估算開口行程總價。"""
-        choices = [
-            self._search_single_segment(segment, max_stops)[:8]
-            for segment in segments
-        ]
-        if len(choices) != len(segments) or any(not leg for leg in choices):
-            raise ValueError("開口行程至少有一段沒有查到可用航班。")
-
-        offers: list[Offer] = []
-        for selected in product(*choices):
-            chosen_segments = [
-                segment
-                for offer in selected
-                for segment in offer.segments
-            ]
-            airlines = list(
-                dict.fromkeys(airline for offer in selected for airline in offer.airlines)
-            )
-            transfers = [
-                airport
-                for offer in selected
-                for airport in offer.transfer_airports
-            ]
-            offers.append(
-                Offer(
-                    from_airport=segments[0][0],
-                    to_airport=segments[0][1],
-                    departure_date=segments[0][2],
-                    price=sum(offer.price for offer in selected),
-                    currency=self.currency,
-                    trip_type="multi-city",
-                    price_basis="sum_of_one_way_quotes",
-                    return_date=segments[1][2] if len(segments) > 1 else None,
-                    segments=chosen_segments,
-                    airlines=airlines,
-                    stops=sum(offer.stops for offer in selected),
-                    transfer_airports=transfers,
-                    duration_minutes=sum(
-                        offer.duration_minutes for offer in selected
-                    ),
-                    departure_time=selected[0].departure_time,
-                    arrival_time=selected[-1].arrival_time,
-                    is_best=all(offer.is_best for offer in selected),
-                    provider=selected[0].provider,
-                )
-            )
-        if not offers:
-            raise ValueError("沒有取得航段方向完整的開口行程組合。")
-        offers.sort(key=lambda o: o.price)
-        return offers[:40]
-
-    def _search_single_segment(
-        self,
-        segment: tuple[str, str, str],
-        max_stops: int | None,
-    ) -> list[Offer]:
-        return self.search_itinerary([segment], trip_type="one-way", max_stops=max_stops)
-
-    @staticmethod
-    def _to_offer(
-        item,
-        requested_segments: list[tuple[str, str, str]],
-        trip_type: str,
-        currency: str,
-        flight_legs: list | None = None,
-        price: int | None = None,
-        airlines: list[str] | None = None,
-        price_basis: str | None = None,
-    ) -> Offer:
-        grouped_legs = _group_flight_legs(
-            flight_legs if flight_legs is not None else item.flights,
-            requested_segments,
-        )
-        if len(grouped_legs) != len(requested_segments):
-            raise ValueError("來源回傳的航段數與查詢不一致。")
-
-        segment_offers = []
-        for (origin, destination, departure_date), legs in zip(
-            requested_segments, grouped_legs
-        ):
-            if not legs:
-                raise ValueError(f"來源未回傳 {origin}→{destination} 航段。")
-            if (
-                legs[0].from_airport.code != origin
-                or legs[-1].to_airport.code != destination
-            ):
-                raise ValueError(
-                    f"來源航段方向不符：預期 {origin}→{destination}。"
-                )
-            first, last = legs[0], legs[-1]
-            transfers = [
-                f"{leg.to_airport.code} {leg.to_airport.name}".strip()
-                for leg in legs[:-1]
-            ]
-            segment_offers.append(
-                {
-                    "from_airport": origin,
-                    "to_airport": destination,
-                    "departure_date": departure_date,
-                    "departure_time": _fmt_hhmm(first.departure.time),
-                    "arrival_time": _fmt_hhmm(last.arrival.time),
-                    "duration_minutes": _total_minutes(first, last, legs),
-                    "stops": max(len(legs) - 1, 0),
-                    "transfer_airports": transfers,
-                }
-            )
-
-        first_requested = requested_segments[0]
-        first_segment = segment_offers[0] if segment_offers else {}
-        last_segment = segment_offers[-1] if segment_offers else {}
-        all_transfers = [
-            airport
-            for segment in segment_offers
-            for airport in segment["transfer_airports"]
-        ]
-        return Offer(
-            from_airport=first_requested[0],
-            to_airport=first_requested[1],
-            departure_date=first_requested[2],
-            price=int(price if price is not None else item.price),
-            currency=currency,
-            trip_type=trip_type,
-            price_basis=price_basis or "fast_flights_quote",
-            return_date=requested_segments[1][2] if len(requested_segments) > 1 else None,
-            segments=segment_offers,
-            airlines=list(airlines if airlines is not None else item.airlines or []),
-            stops=sum(segment["stops"] for segment in segment_offers),
-            transfer_airports=all_transfers,
-            duration_minutes=sum(segment["duration_minutes"] for segment in segment_offers),
-            departure_time=first_segment.get("departure_time", ""),
-            arrival_time=last_segment.get("arrival_time", ""),
-            is_best="best" in str(item.type).lower(),
-        )
-
-
-def _group_flight_legs(
-    flight_legs: list, requested_segments: list[tuple[str, str, str]]
-) -> list[list]:
-    """依查詢目的地，將連續航段切分為去程、回程等航段。"""
-    grouped: list[list] = []
-    cursor = 0
-    for _, destination, _ in requested_segments:
-        segment_legs = []
-        while cursor < len(flight_legs):
-            leg = flight_legs[cursor]
-            cursor += 1
-            segment_legs.append(leg)
-            if leg.to_airport.code == destination:
-                break
-        if not segment_legs or segment_legs[-1].to_airport.code != destination:
-            raise ValueError(f"來源航班沒有抵達預期目的地 {destination}。")
-        grouped.append(segment_legs)
-
-    if cursor != len(flight_legs):
-        raise ValueError("來源回傳了未能配對到查詢航段的航班。")
-    return grouped
-
-
-def _fmt_hhmm(value) -> str:
-    hour, minute = value
-    return f"{hour:02d}:{minute:02d}"
-
-
-def _total_minutes(first, last, legs) -> int:
-    """優先用起降時間計算總時長（含轉機等待），失敗則退回各段飛行時間相加。"""
+def fetch_flights(
+    query_url: str,
+    max_results: int = DEFAULT_MAX_RESULTS,
+    scroll_count: int = DEFAULT_SCROLL_COUNT,
+    headless: bool = True,
+) -> list[PlaywrightFlight]:
+    """開啟 Google Flights 頁面、點擊「Am günstigsten（最便宜）」頁籤、展開所有摺疊航班並解析。"""
     try:
-        departure = datetime(*first.departure.date, *first.departure.time)
-        arrival = datetime(*last.arrival.date, *last.arrival.time)
-        return max(int((arrival - departure).total_seconds() // 60), 0)
-    except (TypeError, ValueError):
-        return sum(leg.duration or 0 for leg in legs)
+        from playwright.sync_api import sync_playwright
+    except ImportError as exc:
+        raise RuntimeError(
+            "未安裝 playwright，請先執行 pip install playwright 與 playwright install chromium。"
+        ) from exc
+
+    _ensure_chromium_installed()
+
+    flights: list[PlaywrightFlight] = []
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=headless,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-blink-features=AutomationControlled",
+            ],
+        )
+        context = browser.new_context(
+            locale="de-DE",
+            timezone_id="Europe/Berlin",
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/131.0.0.0 Safari/537.36"
+            ),
+            viewport={"width": 1366, "height": 960},
+        )
+        context.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+        )
+        page = context.new_page()
+
+        try:
+            page.goto(query_url, wait_until="domcontentloaded", timeout=60000)
+            _dismiss_consent_dialog(page)
+
+            # 等待初始航班列表載入
+            page.wait_for_selector("li", timeout=25000)
+            page.wait_for_timeout(1500)
+
+            # 1. 關鍵步驟：點擊上方「Am günstigsten / Cheapest（最便宜）」頁籤
+            _switch_to_cheapest_tab(page)
+
+            # 2. 確保右側排序為「Nach Preis sortiert / Sorted by price」
+            _ensure_sorted_by_price(page)
+
+            # 3. 展開所有摺疊的「顯示更多航班」
+            _click_show_more(page)
+
+            prev_count = 0
+            stagnant_rounds = 0
+            for _ in range(scroll_count):
+                page.mouse.wheel(0, 4500)
+                page.wait_for_timeout(DEFAULT_WAIT_MS)
+                _click_show_more(page)
+
+                current = _count_visible_cards(page)
+                if current <= prev_count:
+                    stagnant_rounds += 1
+                    if stagnant_rounds >= 2 and current > 0:
+                        break
+                else:
+                    stagnant_rounds = 0
+                prev_count = current
+                if current >= max_results * 3:
+                    break
+
+            cards = page.query_selector_all("li")
+            for card in cards:
+                try:
+                    flight = _parse_card(card)
+                    if flight and flight.price is not None and flight.price > 0:
+                        flights.append(flight)
+                except Exception as exc:
+                    log.debug("略過無法解析的航班卡片：%s", exc)
+        finally:
+            browser.close()
+
+    # 去重並依最低價格排序
+    seen: set[tuple] = set()
+    unique: list[PlaywrightFlight] = []
+    for f in flights:
+        key = (f.price, f.departure_time, f.arrival_time, tuple(f.airlines))
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(f)
+    unique.sort(key=lambda f: (f.price or 10**9, f.duration_minutes))
+    return unique[:max_results]
+
+
+def _dismiss_consent_dialog(page) -> None:
+    """自動關閉歐洲區 Google GDPR Cookie 同意視窗。"""
+    try:
+        reject_btn = page.get_by_role(
+            "button",
+            name=re.compile(r"(?i)(alle ablehnen|reject all|tout refuser|全部拒絕)"),
+        )
+        if reject_btn.count() > 0 and reject_btn.first.is_visible():
+            reject_btn.first.click(timeout=3000)
+            page.wait_for_timeout(1200)
+    except Exception:
+        pass
+
+
+def _switch_to_cheapest_tab(page) -> None:
+    """點擊 Google Flights 頂部的「Am günstigsten / Cheapest（最便宜）」分頁籤。"""
+    pattern = re.compile(r"(?i)(am günstigsten|cheapest|最便宜)")
+    try:
+        # 優先尋找 role="tab" 的分頁元件
+        tab = page.get_by_role("tab", name=pattern)
+        if tab.count() > 0 and tab.first.is_visible():
+            tab.first.click(timeout=3000)
+            page.wait_for_timeout(1800)
+            log.info("已點擊「Am günstigsten（最便宜）」頁籤。")
+            return
+
+        # 備援：直接尋找包含「Am günstigsten」的可點擊元素
+        fallback = page.get_by_text(pattern)
+        if fallback.count() > 0 and fallback.first.is_visible():
+            fallback.first.click(timeout=3000)
+            page.wait_for_timeout(1800)
+            log.info("已透過文字定位點擊「Am günstigsten（最便宜）」頁籤。")
+    except Exception as exc:
+        log.debug("點擊 Am günstigsten 頁籤時略過：%s", exc)
+
+
+def _ensure_sorted_by_price(page) -> None:
+    """確認列表已按價格排序（Nach Preis sortiert），若否則手動切換。"""
+    try:
+        # 若畫面上已經顯示「Nach Preis sortiert」或「Sorted by price」，代表已按價格排序
+        already_sorted = page.get_by_text(
+            re.compile(r"(?i)(nach preis sortiert|sorted by price|已按價格排序)")
+        )
+        if already_sorted.count() > 0 and already_sorted.first.is_visible():
+            return
+
+        sort_btn = page.get_by_role(
+            "button",
+            name=re.compile(r"(?i)(sortieren|sort by|排序)"),
+        )
+        if sort_btn.count() > 0 and sort_btn.first.is_visible():
+            sort_btn.first.click(timeout=3000)
+            page.wait_for_timeout(800)
+
+            price_option = page.get_by_role(
+                "menuitemradio",
+                name=re.compile(r"(?i)^(preis|price|價格|价格)$"),
+            )
+            if price_option.count() == 0:
+                price_option = page.get_by_text(
+                    re.compile(r"(?i)^(preis|price|價格|价格)$")
+                )
+            if price_option.count() > 0 and price_option.first.is_visible():
+                price_option.first.click(timeout=3000)
+                page.wait_for_timeout(1800)
+    except Exception as exc:
+        log.debug("切換價格排序時略過：%s", exc)
+
+
+def _click_show_more(page) -> None:
+    """展開所有摺疊的「其他航班 / 顯示更多航班」區塊。"""
+    try:
+        buttons = page.get_by_role(
+            "button",
+            name=re.compile(
+                r"(?i)(weitere flüge|mehr flüge|more flights|show more|günstigere|cheaper|顯示更多|更多航班)"
+            ),
+        )
+        for btn in buttons.all():
+            if btn.is_visible():
+                btn.click(timeout=2500)
+                page.wait_for_timeout(1000)
+    except Exception:
+        pass
+
+
+def _count_visible_cards(page) -> int:
+    try:
+        return page.locator("li").count()
+    except Exception:
+        return 0
+
+
+def _parse_card(card) -> PlaywrightFlight | None:
+    """從單一航班卡片 DOM 提取資訊（排除包含多張子卡片的外層容器 <li>）。"""
+    if card.query_selector("li") is not None:
+        return None
+
+    text = card.inner_text() or ""
+    if not text.strip():
+        return None
+
+    times = re.findall(r"(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})", text)
+    if not times:
+        return None
+
+    price = _extract_price(text)
+    if price is None or price <= 0:
+        return None
+
+    flight = PlaywrightFlight(
+        price=price,
+        departure_time=times[0][0],
+        arrival_time=times[0][1],
+    )
+
+    stops_match = re.search(r"(\d+)\s*(Stop|Stopp|停)", text, re.IGNORECASE)
+    if stops_match:
+        flight.stops = int(stops_match.group(1))
+    elif re.search(r"(?i)(nonstop|direkt|直飛|直航)", text):
+        flight.stops = 0
+
+    flight.duration_minutes = _extract_duration(text)
+
+    airport_codes = re.findall(r"\b([A-Z]{3})\b", text)
+    airport_codes = [c for c in airport_codes if c not in {"EUR", "USD", "GBP", "TWD", "HKD"}]
+    if len(airport_codes) >= 2:
+        flight.from_airport = airport_codes[0]
+        flight.to_airport = airport_codes[1]
+        if flight.stops > 0 and len(airport_codes) >= 3:
+            flight.transfer_airports = list(dict.fromkeys(airport_codes[1:-1]))
+
+    flight.airlines = _extract_airlines(card, text)
+    flight.is_best = bool(re.search(r"(?i)(beste flüge|top flights|最佳航班)", text))
+    return flight
+
+
+def _extract_price(text: str) -> int | None:
+    """從卡片文字中提取最低有效票價。"""
+    patterns = [
+        r"€\s*([\d.]+)",
+        r"([\d.]+)\s*€",
+        r"EUR\s*([\d.]+)",
+        r"([\d.]+)\s*EUR",
+    ]
+    values: list[int] = []
+    for pattern in patterns:
+        matches = re.findall(pattern, text)
+        for m in matches:
+            cleaned = m.replace(".", "").strip()
+            if cleaned.isdigit():
+                val = int(cleaned)
+                if val >= 10:
+                    values.append(val)
+    return min(values) if values else None
+
+
+def _extract_duration(text: str) -> int:
+    """從卡片文字中提取總時長（分鐘）。"""
+    en_match = re.search(r"(\d+)\s*h\s*(\d+)\s*m", text, re.IGNORECASE)
+    if en_match:
+        return int(en_match.group(1)) * 60 + int(en_match.group(2))
+
+    de_match = re.search(
+        r"(?:(\d+)\s*Std\.?)\s*(?:(\d+)\s*Min\.?)?",
+        text,
+    )
+    if de_match and de_match.group(1):
+        hours = int(de_match.group(1) or 0)
+        minutes = int(de_match.group(2) or 0)
+        return hours * 60 + minutes
+    return 0
+
+
+def _extract_airlines(card, text: str) -> list[str]:
+    """從單張航班卡片中提取航空公司名稱（支援「Eigener Transfer · Pegasus, AJet, China Eastern」格式）。"""
+    airlines: list[str] = []
+
+    # 1. 逐行掃描文字，精準解析航司行（過濾掉「Eigener Transfer / Self-transfer」標籤）
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    for line in lines:
+        if re.search(r"(€|EUR|\d{1,2}:\d{2}|Std\.|Min\.|CO2|Stopp|Nonstop|Flughafenwechsel)", line):
+            continue
+        # 移除「Eigener Transfer · 」或「Self-transfer · 」前綴
+        cleaned_line = re.sub(
+            r"(?i)^(eigener transfer|self-transfer|separates ticket|separate tickets)\s*[·•\-]\s*",
+            "",
+            line,
+        ).strip()
+        if not cleaned_line or cleaned_line.lower() in {"eigener transfer", "self-transfer"}:
+            continue
+        if 2 <= len(cleaned_line) <= 75:
+            for part in re.split(r"[,、·•]", cleaned_line):
+                part_clean = part.strip().rstrip(".")
+                if (
+                    part_clean
+                    and not part_clean.isupper()
+                    and part_clean.lower() not in {"eigener transfer", "self-transfer"}
+                ):
+                    airlines.append(part_clean)
+            if airlines:
+                break
+
+    # 2. 若文字行未抓到，退回抓 <img> 的 aria-label / alt
+    if not airlines:
+        try:
+            imgs = card.query_selector_all("img")
+            for img in imgs:
+                label = img.get_attribute("aria-label") or img.get_attribute("alt") or ""
+                if label and len(label) < 60:
+                    airlines.append(label.strip())
+        except Exception:
+            pass
+
+    return list(dict.fromkeys(airlines))
