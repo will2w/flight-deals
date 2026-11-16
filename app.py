@@ -1,4 +1,4 @@
-"""AERO-RADAR // 魔獸世界 (World of Warcraft) 風格特價機票監控中樞 (app.py)"""
+"""AERO-RADAR // 魔獸世界風格特價機票雷達（智能保底特價與極致精簡版 app.py）"""
 from __future__ import annotations
 
 import json
@@ -73,56 +73,55 @@ def inject_wow_theme() -> None:
             border: 2px solid #78350f;
             border-image: linear-gradient(to right, #b45309, #f59e0b, #b45309) 1;
             border-radius: 6px;
-            padding: 1.4rem 1.8rem;
-            margin-bottom: 1.5rem;
-            box-shadow: 0 0 35px rgba(217, 119, 6, 0.15), inset 0 0 20px rgba(0, 0, 0, 0.8);
+            padding: 1.2rem 1.6rem;
+            margin-bottom: 1.2rem;
+            box-shadow: 0 0 30px rgba(217, 119, 6, 0.15);
         }
         .wow-badge {
             display: inline-block;
             font-family: 'Cinzel Decorative', serif;
-            font-size: 0.75rem;
+            font-size: 0.72rem;
             font-weight: 700;
-            letter-spacing: 0.15em;
+            letter-spacing: 0.12em;
             color: #fbbf24;
             background: rgba(180, 83, 9, 0.2);
             border: 1px solid #d97706;
-            padding: 0.2rem 0.75rem;
+            padding: 0.15rem 0.6rem;
             border-radius: 4px;
-            margin-bottom: 0.5rem;
+            margin-bottom: 0.3rem;
         }
         .wow-title {
             font-family: 'Cinzel Decorative', serif;
-            font-size: 2rem;
+            font-size: 1.8rem;
             font-weight: 700;
             color: #fde68a;
-            text-shadow: 0 2px 4px rgba(0,0,0,0.9);
             margin: 0;
         }
         .wow-subtitle {
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             color: #9ca3af;
-            margin-top: 0.4rem;
+            margin-top: 0.3rem;
             font-family: 'JetBrains Mono', monospace;
         }
 
+        /* 卡片美化：更緊湊、資訊一目了然 */
         .wow-flight-card {
             background: linear-gradient(145deg, #131824 0%, #0b0f17 100%);
             border: 1px solid #374151;
             border-radius: 8px;
-            padding: 1.1rem;
-            margin-bottom: 0.85rem;
-            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
+            padding: 0.9rem 1.1rem;
+            margin-bottom: 0.75rem;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
             transition: all 0.2s ease;
         }
         .wow-flight-card:hover {
             border-color: #d97706;
-            box-shadow: 0 0 20px rgba(217, 119, 6, 0.25);
+            box-shadow: 0 0 16px rgba(217, 119, 6, 0.2);
         }
         .wow-card-epic {
             border: 1px solid #a335ee !important;
             border-left: 5px solid #a335ee !important;
             background: linear-gradient(145deg, #1d142c 0%, #0b0f17 100%) !important;
-            box-shadow: 0 0 20px rgba(163, 53, 238, 0.2) !important;
         }
         .wow-card-rare {
             border-left: 5px solid #0070dd !important;
@@ -130,19 +129,19 @@ def inject_wow_theme() -> None:
 
         .wow-price-tag {
             font-family: 'JetBrains Mono', monospace;
-            font-size: 1.4rem;
+            font-size: 1.35rem;
             font-weight: 700;
-            color: #f59e0b;
+            color: #fbbf24;
         }
         .wow-ota-tag {
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.8rem;
+            font-size: 0.75rem;
             color: #38bdf8;
         }
         .wow-airline {
             font-weight: 600;
-            color: #e5e7eb;
-            font-size: 1rem;
+            color: #f3f4f6;
+            font-size: 0.95rem;
         }
         .wow-meta {
             font-family: 'JetBrains Mono', monospace;
@@ -159,12 +158,12 @@ def inject_wow_theme() -> None:
             background: linear-gradient(160deg, #111827 0%, #0b0f17 100%);
             border: 1px solid #b45309;
             border-radius: 6px;
-            padding: 0.8rem 1rem;
+            padding: 0.7rem 0.9rem;
         }
         [data-testid="stMetricLabel"] {
             color: #9ca3af !important;
             font-family: 'Cinzel Decorative', serif;
-            font-size: 0.75rem !important;
+            font-size: 0.7rem !important;
         }
         [data-testid="stMetricValue"] {
             font-family: 'JetBrains Mono', monospace !important;
@@ -256,6 +255,7 @@ def cached_search(
 def mark_deals(rows: list[dict]) -> pd.DataFrame:
     baselines = build_baselines(read_history(), currency="EUR")
     rules = load_config().deal_rules
+    
     for row in rows:
         key = (row["from_airport"], row["to_airport"], row["departure_date"])
         prices = (
@@ -265,7 +265,16 @@ def mark_deals(rows: list[dict]) -> pd.DataFrame:
         )
         row["is_deal"] = is_deal(row["price"], prices, rules)
         row["baseline_median"] = int(pd.Series(prices).median()) if prices else None
-    return pd.DataFrame(rows)
+
+    df = pd.DataFrame(rows)
+    if not df.empty:
+        # 【智慧保底特價機制】：若歷史資料不足導致 0 筆特價，自動將價格排名前 15% 的超低價航班升格為特價！
+        if df["is_deal"].sum() == 0:
+            df = df.sort_values("price").reset_index(drop=True)
+            cutoff_idx = max(1, int(len(df) * 0.15))
+            df.loc[:cutoff_idx - 1, "is_deal"] = True
+            
+    return df
 
 
 def format_duration(minutes) -> str:
@@ -276,8 +285,21 @@ def format_duration(minutes) -> str:
         return "—"
 
 
+def clean_airline_name(raw_airlines) -> str:
+    """清理航司名稱，過濾冗長的德文代理說明如 'Durchgeführt von...'"""
+    if isinstance(raw_airlines, list):
+        name = "、".join(raw_airlines)
+    else:
+        name = str(raw_airlines or "未知航空")
+    
+    if "Durchgeführt von" in name:
+        name = name.split("Durchgeführt von")[0].strip()
+    if "operated by" in name.lower():
+        name = name.split("operated by")[0].strip()
+    return name.strip(" ,·-")
+
+
 def render_results_grid(df: pd.DataFrame, currency: str, key_prefix: str = "search") -> None:
-    """專業特價導向的雙區塊魔獸卡片儀表板（加入 key_prefix 避免元件衝突）。"""
     if df.empty:
         st.info("未偵測到符合條件的航班，請嘗試放寬條件。")
         return
@@ -306,9 +328,9 @@ def render_results_grid(df: pd.DataFrame, currency: str, key_prefix: str = "sear
 
     with tab_deals:
         if deals_df.empty:
-            st.info("⚔️ 目前未命中歷史特價基準，您可以參考下方「全部可用戰利品」挑選最低價航班。")
+            st.info("⚔️ 目前無特價紀錄。")
         else:
-            st.markdown("### 🌟 系統自動過濾之全場最高 CP 值與特價機票")
+            st.markdown("### 🌟 全場精選最高 CP 值與超低價特價機票")
             for i, row in deals_df.reset_index(drop=True).iterrows():
                 _render_wow_card(row, currency, i + 1, force_epic=True)
 
@@ -364,7 +386,7 @@ def _render_wow_card(row, currency: str, rank: int, force_epic: bool = False) ->
     if pd.notna(ota_price) and ota_price > 0 and int(ota_price) < price:
         price_str += f" <span class='wow-ota-tag'>(OTA: € {int(ota_price):,})</span>"
 
-    airlines = "、".join(row["airlines"]) if isinstance(row["airlines"], list) and row["airlines"] else "未知航空"
+    airlines = clean_airline_name(row.get("airlines"))
     
     segments = row.get("segments", [])
     has_self_transfer = any(
@@ -378,7 +400,7 @@ def _render_wow_card(row, currency: str, rank: int, force_epic: bool = False) ->
         ]
         transfer_text = f"{stops} 站 ({'、'.join(transfers_list)})" if transfers_list else f"{stops} 站"
         if has_self_transfer:
-            transfer_text += " 🔄 自行轉機 (Eigener Transfer)"
+            transfer_text += " 🔄 自行轉機"
 
     dep_date = row.get("departure_date", "")
     dep_time = segments[0].get("departure_time", "") if segments else ""
@@ -388,19 +410,19 @@ def _render_wow_card(row, currency: str, rank: int, force_epic: bool = False) ->
     st.markdown(
         f"""
         <div class="{card_class}">
-            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.4rem;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.3rem;">
                 <div>
-                    <span style="font-size: 0.72rem; font-weight: 700; color: #fbbf24; font-family: 'Cinzel Decorative', serif;">#{rank} | {quality_badge}</span>
+                    <span style="font-size: 0.7rem; font-weight: 700; color: #fbbf24; font-family: 'Cinzel Decorative', serif;">#{rank} | {quality_badge}</span>
                     <div class="wow-airline">{airlines}</div>
                 </div>
                 <div style="text-align: right;">
                     <div class="wow-price-tag">{price_str}</div>
                 </div>
             </div>
-            <div style="font-size: 0.88rem; color: #38bdf8; font-weight: 600; margin-bottom: 0.4rem;">
+            <div style="font-size: 0.85rem; color: #38bdf8; font-weight: 600; margin-bottom: 0.3rem;">
                 {row['from_airport']} ➔ {row['to_airport']} &nbsp;|&nbsp; 出發日：{dep_date}
             </div>
-            <div class="wow-meta" style="display: flex; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 0.4rem; margin-top: 0.4rem;">
+            <div class="wow-meta" style="display: flex; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 0.3rem; margin-top: 0.3rem;">
                 <span>⏳ 時段：{dep_time} – {arr_time} ({duration})</span>
                 <span>🛡️ 轉機：{transfer_text}</span>
             </div>
@@ -491,7 +513,7 @@ def search_tab() -> None:
 
     result = st.session_state.get("search_result")
     if not result:
-        st.caption("💡 提示：系統已鎖定絕對價格升冪排序，並為您精準拆分史詩特價專區與全部戰利品清單。")
+        st.caption("💡 提示：系統已鎖定絕對價格升冪排序，並自動為您挑選全場最高 CP 值特價組合。")
         return
 
     if not result["rows"]:
