@@ -1,4 +1,4 @@
-"""Playwright 全量深度擷取：完美支援 +3 跨日標記與 Eigener Transfer 解析 (src/playwright_fetcher.py)"""
+"""Playwright 全量深度擷取：解鎖頂部 Günstigste Flüge 與精準航司解析 (src/playwright_fetcher.py)"""
 from __future__ import annotations
 
 import logging
@@ -9,7 +9,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_MAX_RESULTS = 150
 DEFAULT_SCROLL_COUNT = 30
-DEFAULT_WAIT_MS = 1500
+DEFAULT_WAIT_MS = 2000
 
 _chromium_checked = False
 
@@ -85,36 +85,22 @@ def fetch_flights(
         try:
             log.info("正在連線 Google Flights 網址: %s", query_url)
             page.goto(query_url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(2000)
+            page.wait_for_timeout(3000)
             
             _dismiss_consent_dialog(page)
             _ensure_cheapest_tab_selected(page)
 
-            try:
-                page.wait_for_selector("li, div[role='listitem']", timeout=15000)
-            except Exception:
-                log.warning("未能在預設時間內找到清單元素，嘗試繼續滾動渲染...")
-
-            prev_count = 0
-            stagnant_rounds = 0
+            # 滾動頁面以加載動態航班
             for _ in range(scroll_count):
                 _expand_all_hidden_flights(page)
                 page.evaluate("window.scrollBy(0, 4000)")
                 page.wait_for_timeout(DEFAULT_WAIT_MS)
-                _expand_all_hidden_flights(page)
 
-                current = _count_visible_cards(page)
-                if current <= prev_count:
-                    stagnant_rounds += 1
-                    if stagnant_rounds >= 3 and current > 0:
-                        break
-                else:
-                    stagnant_rounds = 0
-                prev_count = current
-                if current >= max_results * 3:
-                    break
+            # 【關鍵升級】：廣泛擷取所有可能的航班卡片容器（包含 Günstigste Flüge 與 Andere Flüge）
+            cards = page.query_selector_all("li, div[role='listitem'], div.pIav2d, div.FlightsCtn, div.y11eBe, div.gws-flights-results__itinerary-card")
+            if not cards:
+                cards = page.query_selector_all("div")
 
-            cards = page.query_selector_all("li, div[role='listitem']")
             for card in cards:
                 try:
                     flight = _parse_card(card)
@@ -187,30 +173,15 @@ def _expand_all_hidden_flights(page) -> None:
         pass
 
 
-def _count_visible_cards(page) -> int:
-    try:
-        return page.evaluate(
-            """() => {
-                const items = Array.from(document.querySelectorAll("li, div[role='listitem']"));
-                return items.filter(el => !el.querySelector("li, div[role='listitem']") && /\\d{1,2}:\\d{2}/.test(el.innerText || '')).length;
-            }"""
-        )
-    except Exception:
-        return 0
-
-
 def _parse_card(card) -> PlaywrightFlight | None:
-    if card.query_selector("li, div[role='listitem']") is not None:
-        return None
-
     inner_text = card.inner_text() or ""
     aria_label = card.get_attribute("aria-label") or ""
     
     combined_text = f"{inner_text}\n{aria_label}".strip()
-    if not combined_text:
+    # 必須同時包含價格符號與時間格式，確保是有效的航班卡片
+    if not combined_text or "€" not in combined_text or not re.search(r"\d{1,2}:\d{2}", combined_text):
         return None
 
-    # 【關鍵修復】：支援任意跨日標記（+1, +2, +3 等）
     times = re.findall(r"(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})(?:\+\d+)?", inner_text)
     if not times:
         return None
@@ -220,8 +191,8 @@ def _parse_card(card) -> PlaywrightFlight | None:
         return None
 
     prices = sorted(list(set(prices)))
-    primary_price = prices[-1] if len(prices) > 1 else prices[0]
-    ota_price = prices[0] if len(prices) > 1 else None
+    primary_price = prices[0]  # 直接抓取最低有效價格（如 328 €）
+    ota_price = prices[1] if len(prices) > 1 else None
 
     flight = PlaywrightFlight(
         price=primary_price,
@@ -268,7 +239,7 @@ def _extract_all_prices(text: str) -> list[int]:
                 val = int(cleaned)
                 if 10 <= val <= 15000:
                     values.append(val)
-    return values
+    return sorted(list(set(values)))
 
 
 def _extract_duration(text: str) -> int:
@@ -283,19 +254,38 @@ def _extract_duration(text: str) -> int:
 
 def _extract_airlines(card, text: str) -> list[str]:
     airlines: list[str] = []
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    for line in lines:
-        l_lower = line.lower()
-        if any(kw in l_lower for kw in ["€", "eur", "std.", "min.", "co2", "stopp", "nonstop", "geschätzt", "kg", "durchschn", "eigener transfer", "flughafenwechsel"]):
-            continue
-        cleaned_line = re.sub(r"(?i)^(eigener transfer|self-transfer|separates ticket)\s*[·•\-]\s*", "", line).strip()
-        if not cleaned_line or cleaned_line.lower() in {"eigener transfer", "self-transfer"}:
-            continue
-        if 2 <= len(cleaned_line) <= 75:
-            for part in re.split(r"[,、·•]", cleaned_line):
-                part_clean = part.strip().rstrip(".")
-                if part_clean and not part_clean.isupper() and part_clean.lower() not in {"eigener transfer", "self-transfer", "flughafenwechsel"}:
-                    airlines.append(part_clean)
-            if airlines:
-                break
+    
+    # 1. 優先從圖片 Logo alt/title 抓取
+    try:
+        imgs = card.query_selector_all("img")
+        for img in imgs:
+            alt = img.get_attribute("alt") or img.get_attribute("title") or ""
+            alt = alt.strip()
+            if alt and len(alt) >= 2 and alt.lower() not in {"logo", "flight", "flug", "icon", "airline"}:
+                if alt not in airlines:
+                    airlines.append(alt)
+    except Exception:
+        pass
+
+    # 2. 從文字行中智慧提取
+    if not airlines:
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        for line in lines:
+            l_lower = line.lower()
+            if any(kw in l_lower for kw in ["€", "eur", "std.", "min.", "co2", "stopp", "nonstop", "geschätzt", "kg", "durchschn", "eigener transfer", "flughafenwechsel", "+"]):
+                continue
+            if re.match(r"^\d{1,2}:\d{2}", line):
+                continue
+            cleaned_line = re.sub(r"(?i)^(eigener transfer|self-transfer|separates ticket)\s*[·•\-]\s*", "", line).strip()
+            if not cleaned_line or cleaned_line.lower() in {"eigener transfer", "self-transfer"}:
+                continue
+            if 2 <= len(cleaned_line) <= 50 and not cleaned_line.isdigit():
+                for part in re.split(r"[,、·•]", cleaned_line):
+                    part_clean = part.strip().rstrip(".")
+                    if part_clean and not part_clean.isupper() and not re.match(r"^\d{1,2}:\d{2}", part_clean):
+                        if part_clean.lower() not in {"eigener transfer", "self-transfer", "flughafenwechsel"}:
+                            airlines.append(part_clean)
+                if airlines:
+                    break
+
     return list(dict.fromkeys(airlines))
