@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 from dataclasses import asdict, dataclass, field
-from datetime import datetime
 from itertools import product
 
 from fast_flights import (
@@ -14,7 +13,7 @@ from fast_flights import (
 
 log = logging.getLogger(__name__)
 
-# 強制 Google Flights 直接開啟「Am günstigsten（最便宜）」分頁的內部參數
+# 強制 Google Flights 直接開啟「Am günstigsten（最便宜）」分頁與價格排序的內部參數
 CHEAPEST_SORT_TFU = "EgoIABAAGAAgAigB"
 
 
@@ -28,7 +27,7 @@ class Offer:
     price: int
     currency: str = "EUR"
     trip_type: str = "one-way"
-    price_basis: str = "fast_flights_quote"
+    price_basis: str = "playwright_scroll_quote"
     return_date: str | None = None
     segments: list[dict] = field(default_factory=list)
     airlines: list[str] = field(default_factory=list)
@@ -59,7 +58,7 @@ class GoogleFlightsProvider:
         hide_separate_and_self_transfer: bool = False,
         exclude_basic_economy: bool = False,
         use_playwright: bool = True,
-        playwright_max_results: int = 80,
+        playwright_max_results: int = 150,
         gl: str = "DE",
     ):
         self.currency = currency
@@ -101,17 +100,15 @@ class GoogleFlightsProvider:
             exclude_basic_economy=self.exclude_basic_economy,
         )
         url = query.url()
-        # 強制替換為 search 路由以支援完整的 sc=e 分頁參數
         url = url.replace("/travel/flights?", "/travel/flights/search?")
-        
-        # 強制拼接參數
+
         if "tfu=" not in url:
             url += f"&tfu={CHEAPEST_SORT_TFU}"
         if "sc=e" not in url:
             url += "&sc=e"
         if f"gl={self.gl}" not in url:
             url += f"&gl={self.gl}"
-            
+
         return url
 
     def search(
@@ -148,8 +145,9 @@ class GoogleFlightsProvider:
         return_date = segments[1][2] if len(segments) > 1 else None
 
         from .playwright_fetcher import fetch_flights
+
         flights = fetch_flights(query_url, max_results=self.playwright_max_results)
-        
+
         if not flights:
             raise RuntimeError("Playwright 擷取未取得任何航班結果，請確認網路與瀏覽器相依性。")
 
@@ -203,7 +201,7 @@ class GoogleFlightsProvider:
                     is_best=flight.is_best,
                     provider="google-flights-playwright",
                 )
-            ]
+            )
 
         if not offers:
             raise ValueError("擷取結果中沒有符合轉機條件的航班。")
