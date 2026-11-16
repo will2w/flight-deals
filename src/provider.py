@@ -1,4 +1,4 @@
-"""Google Flights 資料來源，使用 fast-flights 3.x API 並補全德國市場參數與深度擷取。"""
+"""Google Flights 資料來源，預設啟用 Playwright 切換「價格從低到高」排序與展開隱藏低價。"""
 from __future__ import annotations
 
 import logging
@@ -43,7 +43,7 @@ class Offer:
 
 
 class GoogleFlightsProvider:
-    """透過 fast-flights 免費擷取 Google Flights 票價，自動補全 gl=DE 與展開隱藏低價。"""
+    """擷取 Google Flights 票價，預設直接按「價格從低到高」排序抓取並補全 gl=DE。"""
 
     name = "google-flights"
 
@@ -56,8 +56,8 @@ class GoogleFlightsProvider:
         checked_bags: int = 0,
         hide_separate_and_self_transfer: bool = False,
         exclude_basic_economy: bool = False,
-        use_playwright: bool = False,
-        playwright_max_results: int = 60,
+        use_playwright: bool = True,
+        playwright_max_results: int = 80,
         gl: str = "DE",
     ):
         self.currency = currency
@@ -129,7 +129,7 @@ class GoogleFlightsProvider:
         trip_type: str,
         max_stops: int | None = None,
     ) -> list[Offer]:
-        """搜尋單程、往返或多航段行程。"""
+        """搜尋單程、往返或多航段行程（預設直接以 Playwright 切換價格排序抓取）。"""
         if not segments:
             raise ValueError("至少需要一段航程。")
 
@@ -138,45 +138,38 @@ class GoogleFlightsProvider:
 
         query = self._build_query_with_gl(segments, trip_type, max_stops)
 
+        # 預設直接走 Playwright 切換「價格從低到高」排序抓取
         if self.use_playwright:
-            return self._search_with_playwright(query.url(), segments, trip_type, max_stops)
-
-        offers: list[Offer] = []
-        http_error_msg = ""
-        try:
-            results = get_flights(query)
-            for item in results:
-                try:
-                    if item.price is None:
-                        continue
-                    offer = self._to_offer(
-                        item,
-                        segments,
-                        trip_type,
-                        self.currency,
-                        price_basis=(
-                            "fast_flights_round_trip_quote"
-                            if trip_type == "round-trip"
-                            else "fast_flights_quote"
-                        ),
-                    )
-                    offers.append(offer)
-                except ValueError as exc:
-                    log.debug("略過未展開回程的航班結果：%s", exc)
-        except Exception as exc:
-            http_error_msg = str(exc)
-            log.warning("fast-flights HTTP 擷取被擋 (%s)，自動切換 Playwright 備援...", http_error_msg)
-
-        # 無論是 HTTP 報錯 (no flights found; received error) 還是回傳空清單，都自動改用 Playwright 瀏覽器載入
-        if not offers:
             try:
-                offers = self._search_with_playwright(
+                return self._search_with_playwright(
                     query.url(), segments, trip_type, max_stops
                 )
             except Exception as pw_exc:
-                raise RuntimeError(
-                    f"HTTP 擷取失敗 ({http_error_msg or '無結果'})；Playwright 備援亦失敗 ({pw_exc})"
-                ) from pw_exc
+                log.warning("Playwright 價格排序擷取失敗 (%s)，嘗試退回 HTTP 快速擷取...", pw_exc)
+
+        offers: list[Offer] = []
+        results = get_flights(query)
+        for item in results:
+            try:
+                if item.price is None:
+                    continue
+                offer = self._to_offer(
+                    item,
+                    segments,
+                    trip_type,
+                    self.currency,
+                    price_basis=(
+                        "fast_flights_round_trip_quote"
+                        if trip_type == "round-trip"
+                        else "fast_flights_quote"
+                    ),
+                )
+                offers.append(offer)
+            except ValueError as exc:
+                log.debug("略過不完整的航班結果：%s", exc)
+
+        if not offers:
+            raise ValueError("沒有取得任何可核對的完整航班行程。")
 
         offers.sort(key=lambda o: o.price)
         return offers
@@ -188,7 +181,7 @@ class GoogleFlightsProvider:
         trip_type: str,
         max_stops: int | None,
     ) -> list[Offer]:
-        """使用 Playwright 捲動並點擊「顯示更多航班」以擷取所有隱藏低價。"""
+        """使用 Playwright 切換價格排序、捲動並點擊「顯示更多航班」以擷取所有隱藏低價。"""
         from .playwright_fetcher import fetch_flights
 
         origin, destination, departure_date = segments[0]
