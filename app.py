@@ -1,4 +1,4 @@
-"""QUEL'THALAS FLIGHT RADAR // 血精靈雙價格、雙行往返與精準航司戰情室 (app.py)"""
+"""QUEL'THALAS FLIGHT RADAR // 血精靈純票價與精準航司雙行往返戰情室 (app.py)"""
 from __future__ import annotations
 
 import json
@@ -244,30 +244,20 @@ def clean_airline_name(raw_airlines) -> str:
 
 
 def render_professional_table(df: pd.DataFrame, currency: str, trip_label: str, key_prefix: str = "search") -> None:
-    """高資訊密度專業雙行雙價格表格：獨立列出官網價與 OTA 價，並根據是否為往返動態展示回程資訊。"""
     if df.empty:
         st.info("未偵測到符合條件的航班。")
         return
 
-    if "ota_price" not in df.columns:
-        df["ota_price"] = None
-
     df["price"] = pd.to_numeric(df["price"], errors="coerce")
-    df["ota_price"] = pd.to_numeric(df["ota_price"], errors="coerce")
-    
     view = df.sort_values(["price", "duration_minutes"], ascending=[True, True]).reset_index(drop=True)
     cheapest = view.iloc[0]
     direct = view[view["stops"] == 0]
     deals_df = view[view["is_deal"] == True]
 
-    valid_ota = view["ota_price"].dropna()
-    min_ota_str = f"€ {int(valid_ota.min()):,}" if not valid_ota.empty and valid_ota.min() > 0 else "無資料"
-
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("最低直銷票價", f"€ {int(cheapest['price']):,}")
-    col2.metric("最低代理商 (OTA)", min_ota_str)
-    col3.metric("直飛最低價", f"€ {int(direct['price'].min()):,}" if not direct.empty else "無直飛")
-    col4.metric("精選特價組合", f"{len(deals_df)} 筆")
+    col1, col2, col3 = st.columns(3)
+    col1.metric("最低票價", f"€ {int(cheapest['price']):,}")
+    col2.metric("直飛最低價", f"€ {int(direct['price'].min()):,}" if not direct.empty else "無直飛")
+    col3.metric("精選特價組合", f"{len(deals_df)} 筆")
 
     st.markdown("---")
 
@@ -276,17 +266,13 @@ def render_professional_table(df: pd.DataFrame, currency: str, trip_label: str, 
 
     for index, row in view.iterrows():
         price = int(row["price"])
-        ota_price = row.get("ota_price")
         airlines = clean_airline_name(row.get("airlines"))
         stops = int(row.get("stops", 0))
         dep_date = row.get("departure_date", "")
         segments = row.get("segments", [])
         
-        # 價格獨立欄位
-        direct_price_str = f"€ {price:,}"
-        ota_price_str = f"€ {int(ota_price):,}" if pd.notna(ota_price) and ota_price > 0 else "—"
+        price_str = f"€ {price:,}"
 
-        # 去程資訊
         out_dep_time = ""
         out_arr_time = ""
         out_route = f"{row.get('from_airport', '')} ➔ {row.get('to_airport', '')}"
@@ -308,13 +294,11 @@ def render_professional_table(df: pd.DataFrame, currency: str, trip_label: str, 
 
         deal_tag = "🔥 DEAL" if row.get("is_deal") else "—"
 
-        # 雙行展示：第一行去程，第二行回程（若是往返或開口）
         if not is_roundtrip:
             table_rows.append({
                 "排名": index + 1,
                 "特價": deal_tag,
-                f"官網直銷價 ({currency})": direct_price_str,
-                f"OTA代理價 ({currency})": ota_price_str,
+                f"票價 ({currency})": price_str,
                 "航空公司": airlines,
                 "航段方向": f"🛫 去程 ({dep_date})",
                 "航線": out_route,
@@ -323,7 +307,6 @@ def render_professional_table(df: pd.DataFrame, currency: str, trip_label: str, 
                 "轉機詳情": out_transfer_desc,
             })
         else:
-            # 回程資訊解析
             ret_dep_time = ""
             ret_arr_time = ""
             ret_route = "—"
@@ -347,12 +330,10 @@ def render_professional_table(df: pd.DataFrame, currency: str, trip_label: str, 
                     ret_transfer_desc += f" ({'、'.join(ret_transfers)})"
                 ret_duration = format_duration(ret_seg.get("duration_minutes", 0))
 
-            # 第一行：去程
             table_rows.append({
                 "排名": index + 1,
                 "特價": deal_tag,
-                f"官網直銷價 ({currency})": direct_price_str,
-                f"OTA代理價 ({currency})": ota_price_str,
+                f"票價 ({currency})": price_str,
                 "航空公司": airlines,
                 "航段方向": f"🛫 去程 ({dep_date})",
                 "航線": out_route,
@@ -360,12 +341,10 @@ def render_professional_table(df: pd.DataFrame, currency: str, trip_label: str, 
                 "總時長": out_duration,
                 "轉機詳情": out_transfer_desc,
             })
-            # 第二行：回程
             table_rows.append({
                 "排名": "",
                 "特價": "",
-                f"官網直銷價 ({currency})": "",
-                f"OTA代理價 ({currency})": "",
+                f"票價 ({currency})": "",
                 "航空公司": ret_airline,
                 "航段方向": f"🛬 回程 ({ret_date})",
                 "航線": ret_route,
@@ -458,7 +437,7 @@ def search_tab() -> None:
                     requests.append((tuple(segments), trip_type))
 
                 rows: list[dict] = []
-                progress = st.progress(0.0, text="🩸 正在透過太陽之井魔網連線 Google Flights 查詢與雙價格…")
+                progress = st.progress(0.0, text="🩸 正在透過太陽之井魔網連線 Google Flights 查詢最低票價…")
                 for index, (segments, t_type) in enumerate(requests):
                     try:
                         rows.extend(
