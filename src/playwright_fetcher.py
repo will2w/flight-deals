@@ -1,4 +1,4 @@
-"""Playwright 全量深度擷取：增強版防禦與自動 Cookie 彈窗處理 (src/playwright_fetcher.py)"""
+"""Playwright 全量深度擷取：完美支援 +3 跨日標記與 Eigener Transfer 解析 (src/playwright_fetcher.py)"""
 from __future__ import annotations
 
 import logging
@@ -87,13 +87,9 @@ def fetch_flights(
             page.goto(query_url, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(2000)
             
-            # 自動處理 Cookie 同意彈窗
             _dismiss_consent_dialog(page)
-            
-            # 確保切換到「Am günstigsten（最便宜）」分頁
             _ensure_cheapest_tab_selected(page)
 
-            # 等待航班清單元素出現
             try:
                 page.wait_for_selector("li, div[role='listitem']", timeout=15000)
             except Exception:
@@ -146,7 +142,6 @@ def fetch_flights(
 
 def _dismiss_consent_dialog(page) -> None:
     try:
-        # 嘗試多種常見的德國/國際 Google 隱私權同意按鈕文字
         selectors = [
             "button:has-text('Alle ablehnen')",
             "button:has-text('Alle akzeptieren')",
@@ -215,8 +210,8 @@ def _parse_card(card) -> PlaywrightFlight | None:
     if not combined_text:
         return None
 
-    # 抓取起降時間（支援跨日 +1 / +2）
-    times = re.findall(r"(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})(?:\+\d)?", inner_text)
+    # 【關鍵升級】：完美支援任意跨日標記（+1, +2, +3 等）
+    times = re.findall(r"(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})(?:\+\d+)?", inner_text)
     if not times:
         return None
 
@@ -291,7 +286,8 @@ def _extract_airlines(card, text: str) -> list[str]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     for line in lines:
         l_lower = line.lower()
-        if any(kw in l_lower for kw in ["€", "eur", "std.", "min.", "co2", "stopp", "nonstop", "geschätzt", "kg", "durchschn"]):
+        # 過濾雜訊與自行轉機標籤行
+        if any(kw in l_lower for kw in ["€", "eur", "std.", "min.", "co2", "stopp", "nonstop", "geschätzt", "kg", "durchschn", "eigener transfer", "flughafenwechsel"]):
             continue
         cleaned_line = re.sub(r"(?i)^(eigener transfer|self-transfer|separates ticket)\s*[·•\-]\s*", "", line).strip()
         if not cleaned_line or cleaned_line.lower() in {"eigener transfer", "self-transfer"}:
@@ -299,7 +295,7 @@ def _extract_airlines(card, text: str) -> list[str]:
         if 2 <= len(cleaned_line) <= 75:
             for part in re.split(r"[,、·•]", cleaned_line):
                 part_clean = part.strip().rstrip(".")
-                if part_clean and not part_clean.isupper() and part_clean.lower() not in {"eigener transfer", "self-transfer"}:
+                if part_clean and not part_clean.isupper() and part_clean.lower() not in {"eigener transfer", "self-transfer", "flughafenwechsel"}:
                     airlines.append(part_clean)
             if airlines:
                 break
