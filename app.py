@@ -1,4 +1,4 @@
-"""AZEROTH FLIGHT RADAR // 燃燒遠征左右分欄戰情室與完整全球機場數據 (app.py)"""
+"""AZEROTH FLIGHT RADAR // 燃燒遠征全球機場完整版與左右分欄戰情室 (app.py)"""
 from __future__ import annotations
 
 import json
@@ -43,7 +43,7 @@ SEAT_LABELS = {
 
 STOP_CHOICES = {"不限航段": None, "只要直飛 (Nonstop)": 0, "最多轉 1 次": 1}
 
-# 基礎熱門航b點備份
+# 基礎熱門機場對照，後續會透過 airportsdata 自動擴充全球完整機場
 AIRPORTS: dict[str, str] = {
     "TPE": "台北 桃園", "TSA": "台北 松山", "KHH": "高雄", "RMQ": "台中",
     "NRT": "東京 成田", "HND": "東京 羽田", "KIX": "大阪 關西", "ICN": "首爾 仁川",
@@ -139,13 +139,14 @@ def inject_tbc_theme() -> None:
 
 @st.cache_data
 def load_iata_airports() -> dict:
+    """自動從 airportsdata 套件載入全球完整 IATA 機場資料庫。"""
     try:
         return airportsdata.load("IATA")
     except Exception:
         return {}
 
 
-# 完整補全全球 IATA 機場數據
+# 動態將全球完整機場資料庫補全至 AIRPORTS 字典中
 for airport_code, airport in load_iata_airports().items():
     if len(airport_code) != 3:
         continue
@@ -337,7 +338,7 @@ def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str =
 
 
 def search_tab() -> None:
-    """【左右分欄設計】左側控制面板，右側即時展示。"""
+    """【左右分欄設計】左側戰術控制面板，右側即時戰利品展示。"""
     config = load_config()
     codes = list(AIRPORTS)
     default_origin = codes.index("FRA") if "FRA" in codes else 0
@@ -430,7 +431,9 @@ def search_tab() -> None:
 
 
 def watchlist_tab() -> None:
+    """多航線戰術戰情室：動態新增與刪除全球機場監控航線。"""
     config = load_config()
+    codes = list(AIRPORTS)
     
     if "watch_routes" not in st.session_state:
         st.session_state["watch_routes"] = [
@@ -444,8 +447,8 @@ def watchlist_tab() -> None:
 
     with st.form("add_watchlist_form"):
         c1, c2, c3 = st.columns([2, 2, 1])
-        new_origin = c1.selectbox("出發要塞 ORIGIN", list(AIRPORTS), format_func=airport_label, key="add_origin")
-        new_destination = c2.selectbox("目標領地 DESTINATION", list(AIRPORTS), index=1, format_func=airport_label, key="add_dest")
+        new_origin = c1.selectbox("出發要塞 ORIGIN", codes, format_func=airport_label, key="add_origin")
+        new_destination = c2.selectbox("目標領地 DESTINATION", codes, index=1 if len(codes) > 1 else 0, format_func=airport_label, key="add_dest")
         add_btn = c3.form_submit_button("＋ 添加航線", use_container_width=True)
 
     if add_btn:
@@ -472,15 +475,17 @@ def watchlist_tab() -> None:
             st.warning(f"已移除航線：{removed['from']} ➔ {removed['to']}")
             st.rerun()
 
-        token = os.environ.get("GITHUB_TOKEN", "")
-        repository = os.environ.get("GITHUB_REPOSITORY", "")
-        branch = os.environ.get("GITHUB_BRANCH", "main")
+        token = read_secret("GITHUB_TOKEN")
+        repository = read_secret("GITHUB_REPOSITORY")
+        branch = read_secret("GITHUB_BRANCH", "main")
         
         if st.button("☁️ 同步航線至 GitHub 排程倉庫", type="primary"):
             if not token or not repository:
                 st.error("尚未設定 GitHub Secrets (GITHUB_TOKEN 與 GITHUB_REPOSITORY)。")
             else:
                 try:
+                    config_data = yaml.safe_load((ROOT / "config" / "routes.yaml").read_text(encoding="utf-8")) or {}
+                    config_data["routes"] = routes
                     commit_url = update_routes(repository, branch, token, routes)
                     st.success("航線設定已成功同步至 GitHub！")
                     if commit_url:
@@ -563,6 +568,14 @@ def trend_tab() -> None:
     st.line_chart(chart_df, y_label="最低票價 (EUR)", color="#10b981")
 
 
+def read_secret(name: str, default: str = "") -> str:
+    try:
+        value = st.secrets.get(name, default)
+    except Exception:
+        value = os.environ.get(name, default)
+    return str(value or default).strip()
+
+
 def main() -> None:
     inject_tbc_theme()
     st.markdown(
@@ -591,4 +604,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-```eof
