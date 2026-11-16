@@ -1,4 +1,4 @@
-"""Playwright 全量深度擷取：支援雙價格（直銷價與 OTA 代理商價）解析。"""
+"""Playwright 全量深度擷取：過濾 CO2 碳排干擾，精準解析雙價格與航空公司。"""
 from __future__ import annotations
 
 import logging
@@ -178,11 +178,21 @@ def _parse_card(card) -> PlaywrightFlight | None:
 
     inner_text = card.inner_text() or ""
     aria_label = card.get_attribute("aria-label") or ""
-    combined_text = f"{inner_text}\n{aria_label}".strip()
+    
+    # 【關鍵修正】：過濾掉 CO2、geschätzt 與碳排百分比雜訊
+    clean_lines = []
+    for line in inner_text.splitlines():
+        l_lower = line.lower()
+        if "co2" in l_lower or "geschätzt" in l_lower or "%" in l_lower or "kg" in l_lower:
+            continue
+        clean_lines.append(line)
+    
+    inner_text_clean = "\n".join(clean_lines)
+    combined_text = f"{inner_text_clean}\n{aria_label}".strip()
     if not combined_text:
         return None
 
-    times = re.findall(r"(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})", inner_text)
+    times = re.findall(r"(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})", inner_text_clean)
     if not times:
         return None
 
@@ -190,7 +200,6 @@ def _parse_card(card) -> PlaywrightFlight | None:
     if not prices:
         return None
 
-    # 若抓到多個價格，最低的作為 ota_price，次低的或主要的作為直銷 price
     prices = sorted(list(set(prices)))
     primary_price = prices[-1] if len(prices) > 1 else prices[0]
     ota_price = prices[0] if len(prices) > 1 else None
@@ -210,7 +219,7 @@ def _parse_card(card) -> PlaywrightFlight | None:
 
     flight.duration_minutes = _extract_duration(combined_text)
 
-    airport_codes = re.findall(r"\b([A-Z]{3})\b", inner_text)
+    airport_codes = re.findall(r"\b([A-Z]{3})\b", inner_text_clean)
     airport_codes = [c for c in airport_codes if c not in {"EUR", "USD", "GBP", "TWD", "HKD"}]
     if len(airport_codes) >= 2:
         flight.from_airport = airport_codes[0]
@@ -218,7 +227,7 @@ def _parse_card(card) -> PlaywrightFlight | None:
         if flight.stops > 0 and len(airport_codes) >= 3:
             flight.transfer_airports = list(dict.fromkeys(airport_codes[1:-1]))
 
-    flight.airlines = _extract_airlines(card, inner_text)
+    flight.airlines = _extract_airlines(card, inner_text_clean)
     flight.is_best = bool(re.search(r"(?i)(beste flüge|top flights|最佳航班)", combined_text))
     return flight
 
