@@ -1,4 +1,4 @@
-"""QUEL'THALAS FLIGHT RADAR // 血精靈雙價格與往返完整航段戰情室 (app.py)"""
+"""QUEL'THALAS FLIGHT RADAR // 血精靈雙價格、雙行往返與精準航司戰情室 (app.py)"""
 from __future__ import annotations
 
 import json
@@ -243,8 +243,8 @@ def clean_airline_name(raw_airlines) -> str:
     return name.strip(" ,·-")
 
 
-def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str = "search") -> None:
-    """高資訊密度專業雙價格表格：完美呈現去回程航段、雙價格與轉機細節。"""
+def render_professional_table(df: pd.DataFrame, currency: str, trip_label: str, key_prefix: str = "search") -> None:
+    """高資訊密度專業雙行雙價格表格：獨立列出官網價與 OTA 價，並根據是否為往返動態展示回程資訊。"""
     if df.empty:
         st.info("未偵測到符合條件的航班。")
         return
@@ -271,7 +271,9 @@ def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str =
 
     st.markdown("---")
 
+    is_roundtrip = trip_label in ("往返", "開口行程")
     table_rows = []
+
     for index, row in view.iterrows():
         price = int(row["price"])
         ota_price = row.get("ota_price")
@@ -280,62 +282,100 @@ def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str =
         dep_date = row.get("departure_date", "")
         segments = row.get("segments", [])
         
-        outbound_desc = "—"
-        inbound_desc = "—"
-        dep_time = ""
-        arr_time = ""
-        
-        if segments and isinstance(segments, list):
-            out_seg = segments[0]
-            dep_time = out_seg.get("departure_time", "")
-            arr_time = out_seg.get("arrival_time", "")
-            outbound_desc = f"{row.get('from_airport', '')} ➔ {row.get('to_airport', '')} ({dep_date})"
-            
-            if len(segments) > 1:
-                ret_seg = segments[1]
-                ret_dep_date = ret_seg.get("departure_date", dep_date)
-                inbound_desc = f"{ret_seg.get('from_airport', row.get('to_airport', ''))} ➔ {ret_seg.get('to_airport', row.get('from_airport', ''))} ({ret_dep_date})"
+        # 價格獨立欄位
+        direct_price_str = f"€ {price:,}"
+        ota_price_str = f"€ {int(ota_price):,}" if pd.notna(ota_price) and ota_price > 0 else "—"
 
-        duration = format_duration(row.get("duration_minutes", 0))
-        
-        has_self_transfer = any(
-            "self-transfer" in str(seg).lower() or "eigener" in str(seg).lower()
-            for seg in segments
-        ) if isinstance(segments, list) else False
+        # 去程資訊
+        out_dep_time = ""
+        out_arr_time = ""
+        out_route = f"{row.get('from_airport', '')} ➔ {row.get('to_airport', '')}"
+        out_duration = format_duration(row.get("duration_minutes", 0))
         
         transfers_list = [
             airport for seg in segments for airport in seg.get("transfer_airports", [])
             if airport
         ] if isinstance(segments, list) else []
         
-        transfer_desc = "直飛 (Nonstop)" if stops == 0 else f"{stops} 站"
+        out_transfer_desc = "直飛" if stops == 0 else f"{stops} 站"
         if transfers_list:
-            transfer_desc += f" ({'、'.join(transfers_list)})"
-        if has_self_transfer:
-            transfer_desc += " [🔄 自行轉機]"
+            out_transfer_desc += f" ({'、'.join(transfers_list)})"
 
-        price_display = f"€ {price:,} (直銷)"
-        if pd.notna(ota_price) and ota_price > 0 and int(ota_price) < price:
-            price_display = f"€ {int(ota_price):,} (OTA) / € {price:,} (直銷)"
+        if segments and isinstance(segments, list):
+            out_seg = segments[0]
+            out_dep_time = out_seg.get("departure_time", "")
+            out_arr_time = out_seg.get("arrival_time", "")
 
         deal_tag = "🔥 DEAL" if row.get("is_deal") else "—"
 
-        table_rows.append({
-            "排名": index + 1,
-            "特價": deal_tag,
-            f"雙價格 ({currency})": price_display,
-            "直銷價(純數值)": price,
-            "航空公司": airlines,
-            "去程航段": outbound_desc,
-            "回程航段": inbound_desc,
-            "起降時段": f"{dep_time} – {arr_time}" if dep_time else "—",
-            "總時長": duration,
-            "轉機詳情": transfer_desc,
-        })
+        # 雙行展示：第一行去程，第二行回程（若是往返或開口）
+        if not is_roundtrip:
+            table_rows.append({
+                "排名": index + 1,
+                "特價": deal_tag,
+                f"官網直銷價 ({currency})": direct_price_str,
+                f"OTA代理價 ({currency})": ota_price_str,
+                "航空公司": airlines,
+                "航段方向": f"🛫 去程 ({dep_date})",
+                "航線": out_route,
+                "起降時段": f"{out_dep_time} – {out_arr_time}" if out_dep_time else "—",
+                "總時長": out_duration,
+                "轉機詳情": out_transfer_desc,
+            })
+        else:
+            # 回程資訊解析
+            ret_dep_time = ""
+            ret_arr_time = ""
+            ret_route = "—"
+            ret_duration = "—"
+            ret_transfer_desc = "—"
+            ret_date = dep_date
+            ret_airline = airlines
+
+            if len(segments) > 1:
+                ret_seg = segments[1]
+                ret_dep_time = ret_seg.get("departure_time", "")
+                ret_arr_time = ret_seg.get("arrival_time", "")
+                ret_date = ret_seg.get("departure_date", dep_date)
+                ret_from = ret_seg.get("from_airport", row.get("to_airport", ""))
+                ret_to = ret_seg.get("to_airport", row.get("from_airport", ""))
+                ret_route = f"{ret_from} ➔ {ret_to}"
+                ret_stops = int(ret_seg.get("stops", 0))
+                ret_transfers = [a for a in ret_seg.get("transfer_airports", []) if a]
+                ret_transfer_desc = "直飛" if ret_stops == 0 else f"{ret_stops} 站"
+                if ret_transfers:
+                    ret_transfer_desc += f" ({'、'.join(ret_transfers)})"
+                ret_duration = format_duration(ret_seg.get("duration_minutes", 0))
+
+            # 第一行：去程
+            table_rows.append({
+                "排名": index + 1,
+                "特價": deal_tag,
+                f"官網直銷價 ({currency})": direct_price_str,
+                f"OTA代理價 ({currency})": ota_price_str,
+                "航空公司": airlines,
+                "航段方向": f"🛫 去程 ({dep_date})",
+                "航線": out_route,
+                "起降時段": f"{out_dep_time} – {out_arr_time}" if out_dep_time else "—",
+                "總時長": out_duration,
+                "轉機詳情": out_transfer_desc,
+            })
+            # 第二行：回程
+            table_rows.append({
+                "排名": "",
+                "特價": "",
+                f"官網直銷價 ({currency})": "",
+                f"OTA代理價 ({currency})": "",
+                "航空公司": ret_airline,
+                "航段方向": f"🛬 回程 ({ret_date})",
+                "航線": ret_route,
+                "起降時段": f"{ret_dep_time} – {ret_arr_time}" if ret_dep_time else "—",
+                "總時長": ret_duration,
+                "轉機詳情": ret_transfer_desc,
+            })
 
     table_df = pd.DataFrame(table_rows)
-    display_df = table_df.drop(columns=["直銷價(純數值)"])
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    st.dataframe(table_df, use_container_width=True, hide_index=True)
 
     csv_data = view.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
@@ -456,7 +496,7 @@ def search_tab() -> None:
                 st.error("本次查詢未取得任何有效票價，請稍後重試。")
             else:
                 df = mark_deals(result["rows"])
-                render_professional_table(df, config.settings.currency, key_prefix="search")
+                render_professional_table(df, config.settings.currency, trip_label, key_prefix="search")
 
 
 def watchlist_tab() -> None:
@@ -542,7 +582,7 @@ def watchlist_tab() -> None:
         selected_route_filter = st.selectbox("🎯 篩選檢視指定監控航線報價", ["全部顯示 (All Routes)"] + available_routes)
         filtered_watchlist = offers_df if selected_route_filter == "全部顯示 (All Routes)" else offers_df[offers_df["航線"] == selected_route_filter]
 
-        render_professional_table(filtered_watchlist, currency, key_prefix="watch")
+        render_professional_table(filtered_watchlist, currency, "往返", key_prefix="watch")
 
 
 def trend_tab() -> None:
