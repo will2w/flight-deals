@@ -15,7 +15,7 @@ import streamlit as st
 import yaml
 
 st.set_page_config(
-    page_title="AZEROTH FLIGHT RADAR // 艾澤拉斯機票監控中樞",
+    page_title="AZEROTH FLIGHT RADAR // 艾澤拉斯特價機票雷達",
     page_icon="🛡️",
     layout="wide",
     initial_sidebar_state="collapsed",
@@ -42,7 +42,6 @@ SEAT_LABELS = {
 }
 
 STOP_CHOICES = {"不限航段": None, "只要直飛 (Nonstop)": 0, "最多轉 1 次": 1}
-GOOGLE_429_COOLDOWN_SECONDS = 15 * 60
 
 AIRPORTS: dict[str, str] = {
     "TPE": "台北 桃園", "TSA": "台北 松山", "KHH": "高雄", "RMQ": "台中",
@@ -58,20 +57,17 @@ AIRPORTS: dict[str, str] = {
 
 
 def inject_wow_theme() -> None:
-    """注入魔獸世界 (World of Warcraft) 哥德金屬風、血色修道院 / 提瑞斯法林地暗色 CSS 樣式。"""
     st.markdown(
         """
         <style>
         @import url('https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@700&family=JetBrains+Mono:wght@400;600;700&family=Inter:wght@400;500;600;700&display=swap');
 
-        /* 全局魔獸深色背景：暗夜要塞與提瑞斯法融合 */
         .stApp {
             background: radial-gradient(circle at 50% 0%, #11141d 0%, #080a0f 60%, #030407 100%);
             color: #d1d5db;
             font-family: 'Inter', sans-serif;
         }
 
-        /* 頂部魔獸面板標題橫幅 */
         .wow-banner {
             background: linear-gradient(135deg, rgba(30, 41, 59, 0.85) 0%, rgba(15, 23, 42, 0.95) 100%);
             border: 2px solid #78350f;
@@ -80,7 +76,6 @@ def inject_wow_theme() -> None:
             padding: 1.4rem 1.8rem;
             margin-bottom: 1.5rem;
             box-shadow: 0 0 35px rgba(217, 119, 6, 0.15), inset 0 0 20px rgba(0, 0, 0, 0.8);
-            position: relative;
         }
         .wow-badge {
             display: inline-block;
@@ -102,7 +97,6 @@ def inject_wow_theme() -> None:
             color: #fde68a;
             text-shadow: 0 2px 4px rgba(0,0,0,0.9);
             margin: 0;
-            letter-spacing: 0.03em;
         }
         .wow-subtitle {
             font-size: 0.85rem;
@@ -111,63 +105,57 @@ def inject_wow_theme() -> None:
             font-family: 'JetBrains Mono', monospace;
         }
 
-        /* 雙欄式機票卡片 (Item Tooltip 風格) */
+        /* 戰利品卡片樣式 */
         .wow-flight-card {
             background: linear-gradient(145deg, #131824 0%, #0b0f17 100%);
             border: 1px solid #374151;
             border-radius: 8px;
-            padding: 1.25rem;
-            margin-bottom: 1rem;
+            padding: 1.1rem;
+            margin-bottom: 0.85rem;
             box-shadow: 0 4px 15px rgba(0, 0, 0, 0.5);
             transition: all 0.2s ease;
-            position: relative;
         }
         .wow-flight-card:hover {
             border-color: #d97706;
             box-shadow: 0 0 20px rgba(217, 119, 6, 0.25);
         }
         .wow-card-epic {
-            border-left: 5px solid #a335ee !important; /* 史詩紫 */
-            background: linear-gradient(145deg, #171226 0%, #0b0f17 100%) !important;
+            border: 1px solid #a335ee !important;
+            border-left: 5px solid #a335ee !important;
+            background: linear-gradient(145deg, #1d142c 0%, #0b0f17 100%) !important;
+            box-shadow: 0 0 20px rgba(163, 53, 238, 0.2) !important;
         }
         .wow-card-rare {
-            border-left: 5px solid #0070dd !important; /* 稀有藍 */
-        }
-        .wow-card-uncommon {
-            border-left: 5px solid #1eff00 !important; /* 精良綠 */
+            border-left: 5px solid #0070dd !important;
         }
 
-        /* 標籤與數值文字 */
         .wow-price-tag {
             font-family: 'JetBrains Mono', monospace;
-            font-size: 1.5rem;
+            font-size: 1.4rem;
             font-weight: 700;
             color: #f59e0b;
         }
         .wow-ota-tag {
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.85rem;
+            font-size: 0.8rem;
             color: #38bdf8;
         }
         .wow-airline {
             font-weight: 600;
             color: #e5e7eb;
-            font-size: 1.05rem;
+            font-size: 1rem;
         }
         .wow-meta {
             font-family: 'JetBrains Mono', monospace;
-            font-size: 0.8rem;
+            font-size: 0.78rem;
             color: #9ca3af;
         }
 
-        /* 表單與容器 */
         [data-testid="stForm"], [data-testid="stExpander"] {
             background: rgba(15, 23, 42, 0.85) !important;
             border: 1px solid #4b5563 !important;
             border-radius: 8px !important;
         }
-
-        /* 指標卡片 (st.metric) 魔獸金框 */
         [data-testid="stMetric"] {
             background: linear-gradient(160deg, #111827 0%, #0b0f17 100%);
             border: 1px solid #b45309;
@@ -184,8 +172,6 @@ def inject_wow_theme() -> None:
             color: #fbbf24 !important;
             font-weight: 700 !important;
         }
-
-        /* 按鈕：榮耀金光漸層 */
         button[kind="primaryFormSubmit"], button[kind="primary"] {
             background: linear-gradient(90deg, #9a3412 0%, #b45309 50%, #d97706 100%) !important;
             border: 1px solid #f59e0b !important;
@@ -193,10 +179,6 @@ def inject_wow_theme() -> None:
             font-family: 'Cinzel Decorative', serif !important;
             font-weight: 700 !important;
             border-radius: 6px !important;
-            box-shadow: 0 0 15px rgba(217, 119, 6, 0.4) !important;
-        }
-        button[kind="primaryFormSubmit"]:hover, button[kind="primary"]:hover {
-            box-shadow: 0 0 25px rgba(245, 158, 11, 0.7) !important;
         }
         </style>
         """,
@@ -252,7 +234,6 @@ def cached_search(
     exclude_basic_economy: bool,
     use_playwright: bool = True,
 ) -> list[dict]:
-    """查詢多航段行程；預設啟用價格排序深度擷取，快取 5 分鐘。"""
     provider = GoogleFlightsProvider(
         currency=currency,
         language=language,
@@ -274,7 +255,6 @@ def cached_search(
 
 
 def mark_deals(rows: list[dict]) -> pd.DataFrame:
-    """用歷史基準標記每筆是否為特價。"""
     baselines = build_baselines(read_history(), currency="EUR")
     rules = load_config().deal_rules
     for row in rows:
@@ -297,48 +277,12 @@ def format_duration(minutes) -> str:
         return "—"
 
 
-def read_secret(name: str, default: str = "") -> str:
-    try:
-        value = st.secrets.get(name, default)
-    except Exception:
-        value = os.environ.get(name, default)
-    return str(value or default).strip()
-
-
-def route_manager() -> None:
-    config = load_config()
-    if "watch_routes" not in st.session_state:
-        st.session_state["watch_routes"] = [
-            {"from": route.from_airport, "to": route.to_airport}
-            for route in config.routes
-        ]
-    routes = st.session_state["watch_routes"]
-    st.subheader("🛡️ 遠征航線雷達配置")
-
-    with st.form("add_monitored_route"):
-        left, right = st.columns(2)
-        origin = left.selectbox("出發要塞 ORIGIN", list(AIRPORTS), format_func=airport_label, key="watch_origin")
-        destination = right.selectbox("目標領地 DESTINATION", list(AIRPORTS), index=1, format_func=airport_label, key="watch_destination")
-        add_route = st.form_submit_button("＋ 鑄造監控航線", use_container_width=True)
-
-    if add_route:
-        if origin == destination:
-            st.warning("出發地與目的地不能相同。")
-        elif any(r["from"] == origin and r["to"] == destination for r in routes):
-            st.info("此航線已在防禦陣列中。")
-        else:
-            routes.append({"from": origin, "to": destination})
-            st.session_state["watch_routes"] = routes
-            st.rerun()
-
-
 def render_results_grid(df: pd.DataFrame, currency: str) -> None:
-    """魔獸風格雙欄式卡片網格渲染（徹底修復排序並提供精美雙欄檢視）。"""
+    """專業特價導向的雙區塊魔獸卡片儀表板。"""
     if df.empty:
         st.info("未偵測到符合條件的航班，請嘗試放寬條件。")
         return
 
-    # 【關鍵修復】強制將 price 轉為數值型態，並嚴格按數值升冪排序！
     df["price"] = pd.to_numeric(df["price"], errors="coerce")
     if "ota_price" in df.columns:
         df["ota_price"] = pd.to_numeric(df["ota_price"], errors="coerce")
@@ -346,45 +290,66 @@ def render_results_grid(df: pd.DataFrame, currency: str) -> None:
     view = df.sort_values(["price", "duration_minutes"], ascending=[True, True]).reset_index(drop=True)
     cheapest = view.iloc[0]
     direct = view[view["stops"] == 0]
+    deals_df = view[view["is_deal"] == True]
 
     # 頂部魔獸指標
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("最低直銷金幣", f"€ {int(cheapest['price']):,}")
     col2.metric("直飛首選底價", f"€ {int(direct['price'].min()):,}" if not direct.empty else "無直飛航線")
     col3.metric("掉落有效組合", f"{len(view)} 筆")
-    col4.metric("史詩特價命中", f"{int(view['is_deal'].sum())} 筆")
+    col4.metric("史詩特價命中", f"{len(deals_df)} 筆")
 
     st.markdown("---")
-    st.subheader("⚔️ 遠征航班戰利品清單（雙欄檢視）")
 
-    # 雙欄網格迴圈渲染
-    for i in range(0, len(view), 2):
-        col_left, col_right = st.columns(2)
+    # 【核心優化】分頁籤呈現：第一頁專門看「史詩特價」，第二頁看「所有戰利品」
+    tab_deals, tab_all = st.tabs([
+        f"🔥 史詩特價專區 ({len(deals_df)} 筆)",
+        f"📋 全部可用戰利品 ({len(view)} 筆)"
+    ])
+
+    with tab_deals:
+        if deals_df.empty:
+            st.info("⚔️ 目前未命中歷史特價基準，您可以參考下方「全部可用戰利品」挑選最低價航班。")
+        else:
+            st.markdown("### 🌟 系統自動過濾之全場最高 CP 值與特價機票")
+            for i, row in deals_df.reset_index(drop=True).iterrows():
+                _render_wow_card(row, currency, i + 1, force_epic=True)
+
+    with tab_all:
+        # 簡易過濾器
+        col_f1, col_f2 = st.columns(2)
+        only_direct = col_f1.checkbox("僅顯示直飛航線 (Nonstop)", value=False)
+        max_budget = col_f2.slider("最高金幣預算 (EUR)", int(view["price"].min()), int(view["price"].max()), int(view["price"].max()), step=50)
+
+        filtered_view = view[(view["price"] <= max_budget)]
+        if only_direct:
+            filtered_view = filtered_view[filtered_view["stops"] == 0]
+
+        st.markdown(f"### ⚔️ 排序清單（共 {len(filtered_view)} 筆符合條件）")
         
-        with col_left:
-            if i < len(view):
-                _render_wow_card(view.iloc[i], currency, i + 1)
-        with col_right:
-            if i + 1 < len(view):
-                _render_wow_card(view.iloc[i + 1], currency, i + 2)
+        for i in range(0, len(filtered_view), 2):
+            c_left, c_right = st.columns(2)
+            with c_left:
+                if i < len(filtered_view):
+                    _render_wow_card(filtered_view.iloc.iat[i] if hasattr(filtered_view.iloc, 'iat') else filtered_view.iloc[i], currency, i + 1)
+            with c_right:
+                if i + 1 < len(filtered_view):
+                    _render_wow_card(filtered_view.iloc.iat[i+1] if hasattr(filtered_view.iloc, 'iat') else filtered_view.iloc[i+1], currency, i + 2)
 
-    # 同時保留一鍵匯出 CSV
+    # 匯出按鈕
     csv_data = view.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
         "⬇ 下載完整戰利品矩陣 CSV",
         data=csv_data,
         file_name=f"azeroth-radar_{cheapest['from_airport']}-{cheapest['to_airport']}.csv",
         mime="text/csv",
-        use_container_width=True,
     )
 
 
-def _render_wow_card(row, currency: str, rank: int) -> None:
-    """渲染單張魔獸史詩/稀有裝備風格的機票卡片。"""
-    is_deal_item = bool(row.get("is_deal", False))
+def _render_wow_card(row, currency: str, rank: int, force_epic: bool = False) -> None:
+    is_deal_item = force_epic or bool(row.get("is_deal", False))
     stops = int(row.get("stops", 0))
     
-    # 品級邊框樣式
     card_class = "wow-flight-card"
     quality_badge = "🟢 精良"
     if is_deal_item:
@@ -403,7 +368,6 @@ def _render_wow_card(row, currency: str, rank: int) -> None:
 
     airlines = "、".join(row["airlines"]) if isinstance(row["airlines"], list) and row["airlines"] else "未知航空"
     
-    # 檢查自行轉機
     segments = row.get("segments", [])
     has_self_transfer = any(
         "self-transfer" in str(seg).lower() or "eigener" in str(seg).lower()
@@ -426,19 +390,19 @@ def _render_wow_card(row, currency: str, rank: int) -> None:
     st.markdown(
         f"""
         <div class="{card_class}">
-            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.4rem;">
                 <div>
-                    <span style="font-size: 0.75rem; font-weight: 700; color: #fbbf24; font-family: 'Cinzel Decorative', serif;">#{rank} | {quality_badge}</span>
+                    <span style="font-size: 0.72rem; font-weight: 700; color: #fbbf24; font-family: 'Cinzel Decorative', serif;">#{rank} | {quality_badge}</span>
                     <div class="wow-airline">{airlines}</div>
                 </div>
                 <div style="text-align: right;">
                     <div class="wow-price-tag">{price_str}</div>
                 </div>
             </div>
-            <div style="font-size: 0.9rem; color: #38bdf8; font-weight: 600; margin-bottom: 0.5rem;">
+            <div style="font-size: 0.88rem; color: #38bdf8; font-weight: 600; margin-bottom: 0.4rem;">
                 {row['from_airport']} ➔ {row['to_airport']} &nbsp;|&nbsp; 出發日：{dep_date}
             </div>
-            <div class="wow-meta" style="display: flex; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 0.5rem; margin-top: 0.5rem;">
+            <div class="wow-meta" style="display: flex; justify-content: space-between; border-top: 1px solid rgba(255,255,255,0.08); padding-top: 0.4rem; margin-top: 0.4rem;">
                 <span>⏳ 時段：{dep_time} – {arr_time} ({duration})</span>
                 <span>🛡️ 轉機：{transfer_text}</span>
             </div>
@@ -529,7 +493,7 @@ def search_tab() -> None:
 
     result = st.session_state.get("search_result")
     if not result:
-        st.caption("💡 提示：系統已全面升級為雙欄卡片戰利品視窗，並以純數值進行絕對價格升冪排序。")
+        st.caption("💡 提示：系統已鎖定絕對價格升冪排序，並為您精準拆分史詩特價專區與全部戰利品清單。")
         return
 
     if not result["rows"]:
@@ -541,7 +505,6 @@ def search_tab() -> None:
 
 
 def watchlist_tab() -> None:
-    route_manager()
     snapshot = load_snapshot()
     if snapshot is None:
         st.info("尚未同步遠征快照。")
@@ -569,7 +532,7 @@ def main() -> None:
     st.markdown(
         """
         <div class="wow-banner">
-            <div class="wow-badge">AZEROTH FLIGHT RAID // MARKET: DE (EUR) // EPIC LOOT RADAR</div>
+            <div class="wow-badge">AZEROTH FLIGHT RAID // MARKET: DE (EUR) // EPIC DEAL FINDER</div>
             <h1 class="wow-title">艾澤拉斯特價機票監控中樞</h1>
             <div class="wow-subtitle">WORLD OF WARCRAFT THEMED GOOGLE FLIGHTS TELEMETRY &amp; EPIC DEAL FINDER</div>
         </div>
