@@ -1,4 +1,4 @@
-"""Playwright 深度擷取：自動切換 Google Flights「Am günstigsten（最便宜）」頁籤與價格排序。"""
+"""Playwright 深度擷取：強制點擊 Google Flights「Am günstigsten（最便宜）」分頁並解析所有低價。"""
 from __future__ import annotations
 
 import logging
@@ -69,7 +69,7 @@ def fetch_flights(
     scroll_count: int = DEFAULT_SCROLL_COUNT,
     headless: bool = True,
 ) -> list[PlaywrightFlight]:
-    """開啟 Google Flights 頁面、點擊「Am günstigsten（最便宜）」頁籤、展開所有摺疊航班並解析。"""
+    """開啟 Google Flights 頁面、強制點擊「Am günstigsten」分頁、展開所有摺疊航班並解析。"""
     try:
         from playwright.sync_api import sync_playwright
     except ImportError as exc:
@@ -77,7 +77,7 @@ def fetch_flights(
             "未安裝 playwright，請先執行 pip install playwright 與 playwright install chromium。"
         ) from exc
 
-    _ensure_chromium_installed()
+    _ensure_chromium_checked()
 
     flights: list[PlaywrightFlight] = []
     with sync_playwright() as p:
@@ -112,15 +112,12 @@ def fetch_flights(
 
             # 等待初始航班列表載入
             page.wait_for_selector("li", timeout=25000)
-            page.wait_for_timeout(1500)
+            page.wait_for_timeout(2000)
 
-            # 1. 關鍵步驟：點擊上方「Am günstigsten / Cheapest（最便宜）」頁籤
-            _switch_to_cheapest_tab(page)
+            # 關鍵步驟：強制點擊頂部右側的「Am günstigsten / Cheapest（最便宜）」分頁
+            _click_cheapest_tab_safely(page)
 
-            # 2. 確保右側排序為「Nach Preis sortiert / Sorted by price」
-            _ensure_sorted_by_price(page)
-
-            # 3. 展開所有摺疊的「顯示更多航班」
+            # 展開所有摺疊的「顯示更多航班」
             _click_show_more(page)
 
             prev_count = 0
@@ -179,59 +176,27 @@ def _dismiss_consent_dialog(page) -> None:
         pass
 
 
-def _switch_to_cheapest_tab(page) -> None:
-    """點擊 Google Flights 頂部的「Am günstigsten / Cheapest（最便宜）」分頁籤。"""
-    pattern = re.compile(r"(?i)(am günstigsten|cheapest|最便宜)")
+def _click_cheapest_tab_safely(page) -> None:
+    """精準定位並點擊「Am günstigsten（最便宜）」按鈕或區塊。"""
     try:
-        # 優先尋找 role="tab" 的分頁元件
-        tab = page.get_by_role("tab", name=pattern)
-        if tab.count() > 0 and tab.first.is_visible():
-            tab.first.click(timeout=3000)
-            page.wait_for_timeout(1800)
-            log.info("已點擊「Am günstigsten（最便宜）」頁籤。")
-            return
-
-        # 備援：直接尋找包含「Am günstigsten」的可點擊元素
-        fallback = page.get_by_text(pattern)
-        if fallback.count() > 0 and fallback.first.is_visible():
-            fallback.first.click(timeout=3000)
-            page.wait_for_timeout(1800)
-            log.info("已透過文字定位點擊「Am günstigsten（最便宜）」頁籤。")
+        # 方法 1：尋找包含「Am günstigsten」或「ab [金額] €」的按鈕／區塊
+        candidates = page.locator("text=/Am günstigsten/i")
+        if candidates.count() > 0:
+            for i in range(candidates.count()):
+                el = candidates.nth(i)
+                if el.is_visible():
+                    el.click(timeout=3000)
+                    page.wait_for_timeout(2000)
+                    log.info("已成功點擊「Am günstigsten」分頁。")
+                    return
+        
+        # 方法 2：透過座標或點擊第二個分頁籤
+        tabs = page.locator("div[role='tab']")
+        if tabs.count() >= 2:
+            tabs.nth(1).click(timeout=3000)
+            page.wait_for_timeout(2000)
     except Exception as exc:
-        log.debug("點擊 Am günstigsten 頁籤時略過：%s", exc)
-
-
-def _ensure_sorted_by_price(page) -> None:
-    """確認列表已按價格排序（Nach Preis sortiert），若否則手動切換。"""
-    try:
-        # 若畫面上已經顯示「Nach Preis sortiert」或「Sorted by price」，代表已按價格排序
-        already_sorted = page.get_by_text(
-            re.compile(r"(?i)(nach preis sortiert|sorted by price|已按價格排序)")
-        )
-        if already_sorted.count() > 0 and already_sorted.first.is_visible():
-            return
-
-        sort_btn = page.get_by_role(
-            "button",
-            name=re.compile(r"(?i)(sortieren|sort by|排序)"),
-        )
-        if sort_btn.count() > 0 and sort_btn.first.is_visible():
-            sort_btn.first.click(timeout=3000)
-            page.wait_for_timeout(800)
-
-            price_option = page.get_by_role(
-                "menuitemradio",
-                name=re.compile(r"(?i)^(preis|price|價格|价格)$"),
-            )
-            if price_option.count() == 0:
-                price_option = page.get_by_text(
-                    re.compile(r"(?i)^(preis|price|價格|价格)$")
-                )
-            if price_option.count() > 0 and price_option.first.is_visible():
-                price_option.first.click(timeout=3000)
-                page.wait_for_timeout(1800)
-    except Exception as exc:
-        log.debug("切換價格排序時略過：%s", exc)
+        log.debug("點擊最便宜分頁時略過：%s", exc)
 
 
 def _click_show_more(page) -> None:
@@ -340,15 +305,13 @@ def _extract_duration(text: str) -> int:
 
 
 def _extract_airlines(card, text: str) -> list[str]:
-    """從單張航班卡片中提取航空公司名稱（支援「Eigener Transfer · Pegasus, AJet, China Eastern」格式）。"""
+    """從單張航班卡片中提取航空公司名稱。"""
     airlines: list[str] = []
 
-    # 1. 逐行掃描文字，精準解析航司行（過濾掉「Eigener Transfer / Self-transfer」標籤）
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     for line in lines:
         if re.search(r"(€|EUR|\d{1,2}:\d{2}|Std\.|Min\.|CO2|Stopp|Nonstop|Flughafenwechsel)", line):
             continue
-        # 移除「Eigener Transfer · 」或「Self-transfer · 」前綴
         cleaned_line = re.sub(
             r"(?i)^(eigener transfer|self-transfer|separates ticket|separate tickets)\s*[·•\-]\s*",
             "",
@@ -368,7 +331,6 @@ def _extract_airlines(card, text: str) -> list[str]:
             if airlines:
                 break
 
-    # 2. 若文字行未抓到，退回抓 <img> 的 aria-label / alt
     if not airlines:
         try:
             imgs = card.query_selector_all("img")
