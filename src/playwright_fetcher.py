@@ -1,4 +1,4 @@
-"""Playwright 全量深度擷取：完美支援 +3 跨日標記與 Eigener Transfer 解析 (src/playwright_fetcher.py)"""
+"""Playwright 全量深度擷取：精準純票價與航空公司解析 (src/playwright_fetcher.py)"""
 from __future__ import annotations
 
 import logging
@@ -35,7 +35,6 @@ def _ensure_chromium_installed() -> None:
 @dataclass
 class PlaywrightFlight:
     price: int | None = None
-    ota_price: int | None = None
     airlines: list[str] = field(default_factory=list)
     departure_time: str = ""
     arrival_time: str = ""
@@ -83,10 +82,8 @@ def fetch_flights(
         page = context.new_page()
 
         try:
-            log.info("正在連線 Google Flights 網址: %s", query_url)
             page.goto(query_url, wait_until="domcontentloaded", timeout=60000)
             page.wait_for_timeout(2000)
-            
             _dismiss_consent_dialog(page)
             _ensure_cheapest_tab_selected(page)
 
@@ -210,7 +207,6 @@ def _parse_card(card) -> PlaywrightFlight | None:
     if not combined_text:
         return None
 
-    # 【關鍵升級】：完美支援任意跨日標記（+1, +2, +3 等）
     times = re.findall(r"(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})(?:\+\d+)?", inner_text)
     if not times:
         return None
@@ -219,13 +215,11 @@ def _parse_card(card) -> PlaywrightFlight | None:
     if not prices:
         return None
 
-    prices = sorted(list(set(prices)))
-    primary_price = prices[-1] if len(prices) > 1 else prices[0]
-    ota_price = prices[0] if len(prices) > 1 else None
+    # 直接取抓得到的最低有效價格
+    lowest_price = min(prices)
 
     flight = PlaywrightFlight(
-        price=primary_price,
-        ota_price=ota_price,
+        price=lowest_price,
         departure_time=times[0][0],
         arrival_time=times[0][1],
     )
@@ -286,16 +280,18 @@ def _extract_airlines(card, text: str) -> list[str]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     for line in lines:
         l_lower = line.lower()
-        # 過濾雜訊與自行轉機標籤行
+        # 嚴格排除時間格式（如 09:55）、價格、雜訊與專有名詞
+        if re.match(r"^\d{1,2}:\d{2}", line):
+            continue
         if any(kw in l_lower for kw in ["€", "eur", "std.", "min.", "co2", "stopp", "nonstop", "geschätzt", "kg", "durchschn", "eigener transfer", "flughafenwechsel"]):
             continue
         cleaned_line = re.sub(r"(?i)^(eigener transfer|self-transfer|separates ticket)\s*[·•\-]\s*", "", line).strip()
-        if not cleaned_line or cleaned_line.lower() in {"eigener transfer", "self-transfer"}:
+        if not cleaned_line or cleaned_line.lower() in {"eigener transfer", "self-transfer", "flughafenwechsel"}:
             continue
-        if 2 <= len(cleaned_line) <= 75:
+        if 2 <= len(cleaned_line) <= 75 and not cleaned_line.isdigit():
             for part in re.split(r"[,、·•]", cleaned_line):
                 part_clean = part.strip().rstrip(".")
-                if part_clean and not part_clean.isupper() and part_clean.lower() not in {"eigener transfer", "self-transfer", "flughafenwechsel"}:
+                if part_clean and not part_clean.isupper() and not re.match(r"^\d{1,2}:\d{2}", part_clean) and part_clean.lower() not in {"eigener transfer", "self-transfer", "flughafenwechsel"}:
                     airlines.append(part_clean)
             if airlines:
                 break
