@@ -1,4 +1,4 @@
-"""AERO-RADAR // 高效專業機票價格雷達與雙價格矩陣 (app.py)"""
+"""AERO-RADAR // 高效專業機票價格雷達與雙價格分析儀 (app.py)"""
 from __future__ import annotations
 
 import json
@@ -57,7 +57,6 @@ AIRPORTS: dict[str, str] = {
 
 
 def inject_clean_theme() -> None:
-    """注入乾淨、專業、高對比的現代科技風 CSS。"""
     st.markdown(
         """
         <style>
@@ -228,30 +227,34 @@ def clean_airline_name(raw_airlines) -> str:
 
 
 def render_professional_dashboard(df: pd.DataFrame, currency: str, key_prefix: str = "search") -> None:
-    """專業資訊豐富的航班雷達儀表板（雙價格 + 自行轉機 + 完整時間資訊）。"""
     if df.empty:
         st.info("未偵測到符合條件的航班。")
         return
 
+    # 【安全防護】若 DataFrame 缺少 ota_price 欄位，自動補上空值以避免 KeyError
+    if "ota_price" not in df.columns:
+        df["ota_price"] = None
+
     df["price"] = pd.to_numeric(df["price"], errors="coerce")
-    if "ota_price" in df.columns:
-        df["ota_price"] = pd.to_numeric(df["ota_price"], errors="coerce")
+    df["ota_price"] = pd.to_numeric(df["ota_price"], errors="coerce")
     
     view = df.sort_values(["price", "duration_minutes"], ascending=[True, True]).reset_index(drop=True)
     cheapest = view.iloc[0]
     direct = view[view["stops"] == 0]
     deals_df = view[view["is_deal"] == True]
 
-    # 頂部指標
+    # 安全計算最低 OTA 價
+    valid_ota = view["ota_price"].dropna()
+    min_ota_str = f"€ {int(valid_ota.min()):,}" if not valid_ota.empty and valid_ota.min() > 0 else "無資料"
+
     col1, col2, col3, col4 = st.columns(4)
     col1.metric("最低直銷票價", f"€ {int(cheapest['price']):,}")
-    col2.metric("最低代理商 (OTA)", f"€ {int(view['ota_price'].dropna().min()):,}" if not view['ota_price'].dropna().empty else "無資料")
+    col2.metric("最低代理商 (OTA)", min_ota_str)
     col3.metric("直飛最低價", f"€ {int(direct['price'].min()):,}" if not direct.empty else "無直飛")
     col4.metric("精選特價組合", f"{len(deals_df)} 筆")
 
     st.markdown("---")
 
-    # 篩選工具列
     col_f1, col_f2, col_f3 = st.columns(3)
     only_deals = col_f1.checkbox("🔥 僅顯示特價推薦", value=False, key=f"{key_prefix}_deals")
     only_direct = col_f2.checkbox("✈️ 僅顯示直飛航線", value=False, key=f"{key_prefix}_direct")
@@ -273,25 +276,24 @@ def render_professional_dashboard(df: pd.DataFrame, currency: str, key_prefix: s
         dep_date = row.get("departure_date", "")
         segments = row.get("segments", [])
         
-        dep_time = segments[0].get("departure_time", "") if segments else ""
-        arr_time = segments[-1].get("arrival_time", "") if segments else ""
+        dep_time = segments[0].get("departure_time", "") if segments and isinstance(segments, list) else ""
+        arr_time = segments[-1].get("arrival_time", "") if segments and isinstance(segments, list) else ""
         duration = format_duration(row.get("duration_minutes", 0))
         
-        # 檢查自行轉機
         has_self_transfer = any(
             "self-transfer" in str(seg).lower() or "eigener" in str(seg).lower()
             for seg in segments
-        )
+        ) if isinstance(segments, list) else False
         
         transfers_list = [
             airport for seg in segments for airport in seg.get("transfer_airports", [])
-        ]
+        ] if isinstance(segments, list) else []
+        
         transfer_desc = "直飛 (Nonstop)" if stops == 0 else f"{stops} 站 ({'、'.join(transfers_list)})"
         
         deal_badge = '<span class="badge-deal">🔥 特價 DEAL</span>' if row.get("is_deal") else ''
         transfer_badge = '<span class="badge-self-transfer">🔄 自行轉機 (Eigener Transfer)</span>' if has_self_transfer else ''
 
-        # 雙價格顯示邏輯
         price_html = f'<span class="price-direct">€ {price:,}</span> <span style="font-size:0.8rem; color:#94a3b8;">(官網直銷)</span>'
         if pd.notna(ota_price) and ota_price > 0 and int(ota_price) < price:
             price_html += f'&nbsp;&nbsp;|&nbsp;&nbsp;<span class="price-ota">€ {int(ota_price):,}</span> <span style="font-size:0.8rem; color:#34d399;">(OTA 代理商)</span>'
@@ -318,7 +320,6 @@ def render_professional_dashboard(df: pd.DataFrame, currency: str, key_prefix: s
             unsafe_allow_html=True,
         )
 
-    # 下載按鈕
     csv_data = view.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
         "⬇ 下載完整報價矩陣 CSV",
