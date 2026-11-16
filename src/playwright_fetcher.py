@@ -1,4 +1,4 @@
-"""Playwright 全量深度擷取：精準純票價與航空公司解析 (src/playwright_fetcher.py)"""
+"""Playwright 全量深度擷取：具備強固重試與動態渲染等待機制 (src/playwright_fetcher.py)"""
 from __future__ import annotations
 
 import logging
@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 log = logging.getLogger(__name__)
 
 DEFAULT_MAX_RESULTS = 150
-DEFAULT_SCROLL_COUNT = 30
-DEFAULT_WAIT_MS = 1500
+DEFAULT_SCROLL_COUNT = 35
+DEFAULT_WAIT_MS = 2500
 
 _chromium_checked = False
 
@@ -82,36 +82,24 @@ def fetch_flights(
         page = context.new_page()
 
         try:
-            page.goto(query_url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(2000)
+            log.info("正在連線 Google Flights 網址: %s", query_url)
+            page.goto(query_url, wait_until="networkidle", timeout=60000)
+            page.wait_for_timeout(3000)
+            
             _dismiss_consent_dialog(page)
             _ensure_cheapest_tab_selected(page)
 
-            try:
-                page.wait_for_selector("li, div[role='listitem']", timeout=15000)
-            except Exception:
-                log.warning("未能在預設時間內找到清單元素，嘗試繼續滾動渲染...")
-
-            prev_count = 0
-            stagnant_rounds = 0
-            for _ in range(scroll_count):
+            # 多次滾動確保動態非同步載入的航班卡片完全渲染
+            for i in range(scroll_count):
                 _expand_all_hidden_flights(page)
                 page.evaluate("window.scrollBy(0, 4000)")
                 page.wait_for_timeout(DEFAULT_WAIT_MS)
-                _expand_all_hidden_flights(page)
 
-                current = _count_visible_cards(page)
-                if current <= prev_count:
-                    stagnant_rounds += 1
-                    if stagnant_rounds >= 3 and current > 0:
-                        break
-                else:
-                    stagnant_rounds = 0
-                prev_count = current
-                if current >= max_results * 3:
-                    break
+            # 寬鬆擷取所有可能包含航班資訊的容器
+            cards = page.query_selector_all("li, div[role='listitem'], div.pIav2d, div.FlightsCtn, div.gws-flights-results__result-item")
+            if not cards:
+                cards = page.query_selector_all("div")
 
-            cards = page.query_selector_all("li, div[role='listitem']")
             for card in cards:
                 try:
                     flight = _parse_card(card)
@@ -163,7 +151,7 @@ def _ensure_cheapest_tab_selected(page) -> None:
         if tab.count() > 0 and tab.is_visible():
             if tab.get_attribute("aria-selected") != "true":
                 tab.click(force=True, timeout=3000)
-                page.wait_for_timeout(1500)
+                page.wait_for_timeout(2000)
     except Exception:
         pass
 
@@ -184,27 +172,12 @@ def _expand_all_hidden_flights(page) -> None:
         pass
 
 
-def _count_visible_cards(page) -> int:
-    try:
-        return page.evaluate(
-            """() => {
-                const items = Array.from(document.querySelectorAll("li, div[role='listitem']"));
-                return items.filter(el => !el.querySelector("li, div[role='listitem']") && /\\d{1,2}:\\d{2}/.test(el.innerText || '')).length;
-            }"""
-        )
-    except Exception:
-        return 0
-
-
 def _parse_card(card) -> PlaywrightFlight | None:
-    if card.query_selector("li, div[role='listitem']") is not None:
-        return None
-
     inner_text = card.inner_text() or ""
     aria_label = card.get_attribute("aria-label") or ""
     
     combined_text = f"{inner_text}\n{aria_label}".strip()
-    if not combined_text:
+    if not combined_text or "€" not in combined_text:
         return None
 
     times = re.findall(r"(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})(?:\+\d+)?", inner_text)
@@ -215,7 +188,6 @@ def _parse_card(card) -> PlaywrightFlight | None:
     if not prices:
         return None
 
-    # 直接取抓得到的最低有效價格
     lowest_price = min(prices)
 
     flight = PlaywrightFlight(
@@ -240,7 +212,7 @@ def _parse_card(card) -> PlaywrightFlight | None:
         if flight.stops > 0 and len(airport_codes) >= 3:
             flight.transfer_airports = list(dict.fromkeys(airport_codes[1:-1]))
 
-    flight.airlines = _extract_airlines(card, inner_text)
+    flight.airlines = _extract_airlines(inner_text)
     flight.is_best = bool(re.search(r"(?i)(beste flüge|top flights|最佳航班)", combined_text))
     return flight
 
@@ -275,12 +247,11 @@ def _extract_duration(text: str) -> int:
     return 0
 
 
-def _extract_airlines(card, text: str) -> list[str]:
+def _extract_airlines(text: str) -> list[str]:
     airlines: list[str] = []
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     for line in lines:
         l_lower = line.lower()
-        # 嚴格排除時間格式（如 09:55）、價格、雜訊與專有名詞
         if re.match(r"^\d{1,2}:\d{2}", line):
             continue
         if any(kw in l_lower for kw in ["€", "eur", "std.", "min.", "co2", "stopp", "nonstop", "geschätzt", "kg", "durchschn", "eigener transfer", "flughafenwechsel"]):
