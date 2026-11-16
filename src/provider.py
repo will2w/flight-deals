@@ -1,9 +1,9 @@
-"""Google Flights 供應商轉接層：純票價與精準航段解析 (src/provider.py)"""
+"""Google Flights 供應商轉接層：完整帶入搜尋參數與純票價解析 (src/provider.py)"""
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from datetime import datetime
+from urllib.parse import quote
 
 from src.playwright_fetcher import fetch_flights
 
@@ -68,9 +68,20 @@ class GoogleFlightsProvider:
         first_seg = segments[0]
         origin, destination, dep_date = first_seg[0], first_seg[1], first_seg[2]
 
-        # 構建 Google Flights 查詢網址
+        # 構建精準帶有搜尋參數的 Google Flights 查詢網址
         base_url = "https://www.google.com/travel/flights"
-        query_url = f"{base_url}?hl={self.language}&curr={self.currency}"
+        
+        # 根據是否為往返或單程建構查詢 query
+        if trip_type in ("round-trip", "multi-city") and len(segments) > 1:
+            ret_seg = segments[1]
+            ret_origin, ret_dest, ret_date = ret_seg[0], ret_seg[1], ret_seg[2]
+            query_str = f"Flights from {origin} to {destination} on {dep_date} and returning on {ret_date}"
+        else:
+            query_str = f"Flights from {origin} to {destination} on {dep_date}"
+
+        query_url = f"{base_url}?q={quote(query_str)}&hl={self.language}&curr={self.currency}"
+
+        log.info("發起 Google Flights 查詢網址: %s", query_url)
 
         # 呼叫 Playwright 擷取
         pw_flights = fetch_flights(query_url, headless=True)
@@ -92,7 +103,6 @@ class GoogleFlightsProvider:
                 }
             ]
 
-            # 若為往返行程，加入回程模擬區段
             if trip_type in ("round-trip", "multi-city") and len(segments) > 1:
                 ret_seg = segments[1]
                 seg_list.append(
