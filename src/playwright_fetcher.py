@@ -1,4 +1,4 @@
-"""Playwright 全量深度擷取：強固自動等待與雙重防禦解析 (src/playwright_fetcher.py)"""
+"""Playwright 全量深度擷取：完美支援 +3 跨日標記與 Eigener Transfer 解析 (src/playwright_fetcher.py)"""
 from __future__ import annotations
 
 import logging
@@ -9,7 +9,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_MAX_RESULTS = 150
 DEFAULT_SCROLL_COUNT = 30
-DEFAULT_WAIT_MS = 2500
+DEFAULT_WAIT_MS = 1500
 
 _chromium_checked = False
 
@@ -85,23 +85,36 @@ def fetch_flights(
         try:
             log.info("正在連線 Google Flights 網址: %s", query_url)
             page.goto(query_url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(3000)
+            page.wait_for_timeout(2000)
             
-            # 強制自動點擊同意/拒絕 Cookie 彈窗，避免遮擋畫面
             _dismiss_consent_dialog(page)
             _ensure_cheapest_tab_selected(page)
 
-            # 滾動頁面以加載動態航班
+            try:
+                page.wait_for_selector("li, div[role='listitem']", timeout=15000)
+            except Exception:
+                log.warning("未能在預設時間內找到清單元素，嘗試繼續滾動渲染...")
+
+            prev_count = 0
+            stagnant_rounds = 0
             for _ in range(scroll_count):
                 _expand_all_hidden_flights(page)
                 page.evaluate("window.scrollBy(0, 4000)")
                 page.wait_for_timeout(DEFAULT_WAIT_MS)
+                _expand_all_hidden_flights(page)
 
-            # 雙重防禦選擇器：標準列表或萬用容器
-            cards = page.query_selector_all("li, div[role='listitem'], div.pIav2d, div.FlightsCtn")
-            if not cards:
-                cards = page.query_selector_all("div")
+                current = _count_visible_cards(page)
+                if current <= prev_count:
+                    stagnant_rounds += 1
+                    if stagnant_rounds >= 3 and current > 0:
+                        break
+                else:
+                    stagnant_rounds = 0
+                prev_count = current
+                if current >= max_results * 3:
+                    break
 
+            cards = page.query_selector_all("li, div[role='listitem']")
             for card in cards:
                 try:
                     flight = _parse_card(card)
@@ -174,14 +187,30 @@ def _expand_all_hidden_flights(page) -> None:
         pass
 
 
+def _count_visible_cards(page) -> int:
+    try:
+        return page.evaluate(
+            """() => {
+                const items = Array.from(document.querySelectorAll("li, div[role='listitem']"));
+                return items.filter(el => !el.querySelector("li, div[role='listitem']") && /\\d{1,2}:\\d{2}/.test(el.innerText || '')).length;
+            }"""
+        )
+    except Exception:
+        return 0
+
+
 def _parse_card(card) -> PlaywrightFlight | None:
+    if card.query_selector("li, div[role='listitem']") is not None:
+        return None
+
     inner_text = card.inner_text() or ""
     aria_label = card.get_attribute("aria-label") or ""
     
     combined_text = f"{inner_text}\n{aria_label}".strip()
-    if not combined_text or "€" not in combined_text:
+    if not combined_text:
         return None
 
+    # 【關鍵升級】：完美支援任意跨日標記（+1, +2, +3 等）
     times = re.findall(r"(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})(?:\+\d+)?", inner_text)
     if not times:
         return None
@@ -257,6 +286,7 @@ def _extract_airlines(card, text: str) -> list[str]:
     lines = [line.strip() for line in text.splitlines() if line.strip()]
     for line in lines:
         l_lower = line.lower()
+        # 過濾雜訊與自行轉機標籤行
         if any(kw in l_lower for kw in ["€", "eur", "std.", "min.", "co2", "stopp", "nonstop", "geschätzt", "kg", "durchschn", "eigener transfer", "flughafenwechsel"]):
             continue
         cleaned_line = re.sub(r"(?i)^(eigener transfer|self-transfer|separates ticket)\s*[·•\-]\s*", "", line).strip()
