@@ -26,7 +26,10 @@ def _ensure_chromium_installed() -> None:
 
     try:
         with sync_playwright() as p:
-            p.chromium.launch(headless=True).close()
+            p.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-dev-shm-usage"],
+            ).close()
         _chromium_checked = True
         return
     except Exception:
@@ -78,16 +81,28 @@ def fetch_flights(
 
     flights: list[PlaywrightFlight] = []
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=headless)
+        browser = p.chromium.launch(
+            headless=headless,
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-blink-features=AutomationControlled",
+            ],
+        )
         context = browser.new_context(
             locale="de-DE",
             timezone_id="Europe/Berlin",
             user_agent=(
                 "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
                 "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/130.0.0.0 Safari/537.36"
+                "Chrome/131.0.0.0 Safari/537.36"
             ),
             viewport={"width": 1366, "height": 960},
+        )
+        context.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
         page = context.new_page()
 
