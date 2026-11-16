@@ -280,20 +280,17 @@ def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str =
         dep_date = row.get("departure_date", "")
         segments = row.get("segments", [])
         
-        # 解析去回程航段與時間
         outbound_desc = "—"
         inbound_desc = "—"
         dep_time = ""
         arr_time = ""
         
         if segments and isinstance(segments, list):
-            # 去程
             out_seg = segments[0]
             dep_time = out_seg.get("departure_time", "")
             arr_time = out_seg.get("arrival_time", "")
-            outbound_desc = f"{row.get('from_airport', '')} ➔ {row..get('to_airport', '')} ({dep_date})"
+            outbound_desc = f"{row.get('from_airport', '')} ➔ {row.get('to_airport', '')} ({dep_date})"
             
-            # 回程（若是往返或多航段）
             if len(segments) > 1:
                 ret_seg = segments[1]
                 ret_dep_date = ret_seg.get("departure_date", dep_date)
@@ -317,7 +314,6 @@ def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str =
         if has_self_transfer:
             transfer_desc += " [🔄 自行轉機]"
 
-        # 嚴格區分直銷價與 OTA 代理價
         price_display = f"€ {price:,} (直銷)"
         if pd.notna(ota_price) and ota_price > 0 and int(ota_price) < price:
             price_display = f"€ {int(ota_price):,} (OTA) / € {price:,} (直銷)"
@@ -352,7 +348,6 @@ def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str =
 
 
 def search_tab() -> None:
-    """【動態航程表單】支援單程、往返、開口行程之左右分欄控制面板。"""
     config = load_config()
     codes = list(AIRPORTS)
     default_origin = codes.index("FRA") if "FRA" in codes else (0 if codes else "")
@@ -465,7 +460,6 @@ def search_tab() -> None:
 
 
 def watchlist_tab() -> None:
-    """【左右分欄設計】左側血精靈控制面板管理航線，右側戰情室即時聚合展示。"""
     config = load_config()
     codes = list(AIRPORTS)
     
