@@ -1,4 +1,4 @@
-"""QUEL'THALAS FLIGHT RADAR // 血精靈風格全球機場與左右分欄雙戰情室 (app.py)"""
+"""QUEL'THALAS FLIGHT RADAR // 血精靈風格動態航程表單與左右分欄雙戰情室 (app.py)"""
 from __future__ import annotations
 
 import json
@@ -45,7 +45,6 @@ STOP_CHOICES = {"不限航段": None, "只要直飛 (Nonstop)": 0, "最多轉 1 
 
 
 def inject_blood_elf_theme() -> None:
-    """注入血精靈（Blood Elf）太陽之井金紅奢華風格 CSS 樣式。"""
     st.markdown(
         """
         <style>
@@ -131,7 +130,6 @@ def inject_blood_elf_theme() -> None:
 
 @st.cache_data
 def load_all_airports() -> dict[str, str]:
-    """自動從 airportsdata 套件載入全球完整 IATA 機場資料庫。"""
     airports_dict = {}
     try:
         raw_data = airportsdata.load("IATA")
@@ -145,7 +143,7 @@ def load_all_airports() -> dict[str, str]:
             ]
             airports_dict[code] = " · ".join(name_parts) or code
     except Exception:
-        airports_dict = {"FRA": "Frankfurt · Frankfurt am Main · Germany", "HKG": "Hong Kong · Hong Kong International Airport · Hong Kong"}
+        airports_dict = {"FRA": "Frankfurt · Germany", "HKG": "Hong Kong · Hong Kong"}
     return airports_dict
 
 
@@ -332,13 +330,13 @@ def render_professional_table(df: pd.DataFrame, currency: str, key_prefix: str =
 
 
 def search_tab() -> None:
-    """【左右分欄設計】左側血精靈控制面板，右側即時戰利品展示。"""
+    """【動態航程表單】支援單程、往返、開口行程之左右分欄控制面板。"""
     config = load_config()
     codes = list(AIRPORTS)
     default_origin = codes.index("FRA") if "FRA" in codes else (0 if codes else "")
     default_dest = codes.index("HKG") if "HKG" in codes else (1 if len(codes) > 1 else 0)
 
-    col_left, col_right = st.columns([0.35, 0.65], gap="large")
+    col_left, col_right = st.columns([0.38, 0.62], gap="large")
 
     with col_left:
         st.markdown("### 🎛️ 太陽之井雷達控制面板")
@@ -347,17 +345,32 @@ def search_tab() -> None:
                 "航程模式 // ITINERARY MODE",
                 ["單程", "往返", "開口行程"],
                 horizontal=True,
+                key="trip_mode_radio"
             )
-            origin = st.selectbox("出發機場 // ORIGIN", codes, index=default_origin, format_func=airport_label)
-            destination = st.selectbox("目的機場 // DESTINATION", codes, index=default_dest, format_func=airport_label)
 
+            # 第一航段
+            st.markdown("##### 🛫 去程航段 (Outbound)")
+            origin = st.selectbox("出發機場 // ORIGIN", codes, index=default_origin, format_func=airport_label, key="out_origin")
+            destination = st.selectbox("目的機場 // DESTINATION", codes, index=default_dest, format_func=airport_label, key="out_dest")
             departure = st.date_input("出發日期 // DEPARTURE", value=date.today() + timedelta(days=30), min_value=date.today())
-            flexible = st.number_input("彈性日期範圍 ±(天)", min_value=0, max_value=7, value=0, step=1)
 
             return_date = None
-            if trip_label in ("往返", "開口行程"):
-                return_date = st.date_input("回程日期 // RETURN", value=departure + timedelta(days=7), min_value=departure)
+            return_origin = None
+            return_destination = None
 
+            # 往返或開口行程：動態渲染回程條件
+            if trip_label == "往返":
+                st.markdown("##### 🛬 回程航段 (Return)")
+                return_date = st.date_input("回程日期 // RETURN", value=departure + timedelta(days=7), min_value=departure)
+                return_origin = destination
+                return_destination = origin
+            elif trip_label == "開口行程":
+                st.markdown("##### 🛬 回程航段 (Open-Jaw Return)")
+                return_origin = st.selectbox("回程出發機場 // RETURN ORIGIN", codes, index=default_dest, format_func=airport_label, key="ret_origin")
+                return_destination = st.selectbox("回程目的機場 // RETURN DESTINATION", codes, index=default_origin, format_func=airport_label, key="ret_dest")
+                return_date = st.date_input("回程日期 // RETURN DATE", value=departure + timedelta(days=7), min_value=departure)
+
+            flexible = st.number_input("彈性日期範圍 ±(天)", min_value=0, max_value=7, value=0, step=1)
             seat = st.selectbox("艙等 // CABIN CLASS", list(SEAT_LABELS), format_func=lambda s: SEAT_LABELS[s])
             stops_label = st.radio("轉機限制 // STOPS", list(STOP_CHOICES), horizontal=True)
 
@@ -370,20 +383,26 @@ def search_tab() -> None:
     with col_right:
         st.markdown("### 📊 航班戰利品即時展示區")
         if submitted:
-            if origin == destination:
+            if origin == destination and trip_label == "單程":
                 st.warning("出發地與目的地不能相同。")
             else:
                 dates = [departure + timedelta(days=offset) for offset in range(-flexible, flexible + 1)]
-                trip_type = {"單程": "one-way", "往返": "round-trip", "開口行程": "multi-city"}[trip_label]
+                t_type_map = {"單程": "one-way", "往返": "round-trip", "開口行程": "multi-city"}
+                trip_type = t_type_map[trip_label]
+                
                 requests = []
                 for outbound_date in dates:
                     segments = [(origin, destination, outbound_date.isoformat())]
-                    if trip_label != "單程" and return_date:
-                        segments.append((destination, origin, return_date.isoformat()))
+                    if trip_label == "往返" and return_date:
+                        ret_date_str = (return_date + (outbound_date - departure)).isoformat()
+                        segments.append((return_origin, return_destination, ret_date_str))
+                    elif trip_label == "開口行程" and return_date:
+                        ret_date_str = (return_date + (outbound_date - departure)).isoformat()
+                        segments.append((return_origin, return_destination, ret_date_str))
                     requests.append((tuple(segments), trip_type))
 
                 rows: list[dict] = []
-                progress = st.progress(0.0, text="🩸 正在透過太陽之井魔網連線 Google Flights 最便宜分頁與雙價格…")
+                progress = st.progress(0.0, text="🩸 正在透過太陽之井魔網連線 Google Flights 查詢與雙價格…")
                 for index, (segments, t_type) in enumerate(requests):
                     try:
                         rows.extend(
@@ -415,7 +434,7 @@ def search_tab() -> None:
 
         result = st.session_state.get("search_result")
         if not result:
-            st.info("👈 請在左側設定航線與條件，點擊 **「啟動奎爾薩拉斯即時雷達」** 開始檢索。")
+            st.info("👈 請在左側設定航線與模式（單程/往返/開口），點擊 **「啟動奎爾薩拉斯即時雷達」** 開始檢索。")
         else:
             if not result["rows"]:
                 st.error("本次查詢未取得任何有效票價，請稍後重試。")
