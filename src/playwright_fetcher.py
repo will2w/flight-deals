@@ -1,4 +1,4 @@
-"""Playwright 全量深度擷取：完美支援跨日 +1 時間標記與精準雙價格解析。"""
+"""Playwright 全量深度擷取：增強版防禦與自動 Cookie 彈窗處理 (src/playwright_fetcher.py)"""
 from __future__ import annotations
 
 import logging
@@ -8,8 +8,8 @@ from dataclasses import dataclass, field
 log = logging.getLogger(__name__)
 
 DEFAULT_MAX_RESULTS = 150
-DEFAULT_SCROLL_COUNT = 25
-DEFAULT_WAIT_MS = 1000
+DEFAULT_SCROLL_COUNT = 30
+DEFAULT_WAIT_MS = 1500
 
 _chromium_checked = False
 
@@ -64,7 +64,14 @@ def fetch_flights(
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=headless,
-            args=["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu", "--disable-blink-features=AutomationControlled"],
+            args=[
+                "--no-sandbox",
+                "--disable-setuid-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-blink-features=AutomationControlled",
+                "--window-size=1440,1200",
+            ],
         )
         context = browser.new_context(
             locale="de-DE",
@@ -76,16 +83,27 @@ def fetch_flights(
         page = context.new_page()
 
         try:
+            log.info("正在連線 Google Flights 網址: %s", query_url)
             page.goto(query_url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(1500)
+            page.wait_for_timeout(2000)
+            
+            # 自動處理 Cookie 同意彈窗
             _dismiss_consent_dialog(page)
+            
+            # 確保切換到「Am günstigsten（最便宜）」分頁
             _ensure_cheapest_tab_selected(page)
+
+            # 等待航班清單元素出現
+            try:
+                page.wait_for_selector("li, div[role='listitem']", timeout=15000)
+            except Exception:
+                log.warning("未能在預設時間內找到清單元素，嘗試繼續滾動渲染...")
 
             prev_count = 0
             stagnant_rounds = 0
             for _ in range(scroll_count):
                 _expand_all_hidden_flights(page)
-                page.evaluate("window.scrollBy(0, 3500)")
+                page.evaluate("window.scrollBy(0, 4000)")
                 page.wait_for_timeout(DEFAULT_WAIT_MS)
                 _expand_all_hidden_flights(page)
 
@@ -111,6 +129,9 @@ def fetch_flights(
         finally:
             browser.close()
 
+    if not flights:
+        raise RuntimeError("Playwright 擷取未取得任何航班結果。請確認網路連線或 Google Flights 網址是否正確。")
+
     seen: set[tuple] = set()
     unique: list[PlaywrightFlight] = []
     for f in flights:
@@ -125,10 +146,21 @@ def fetch_flights(
 
 def _dismiss_consent_dialog(page) -> None:
     try:
-        btn = page.locator("button:has-text('Alle ablehnen'), button:has-text('Reject all'), form[action*='consent'] button").first
-        if btn.count() > 0 and btn.is_visible():
-            btn.click(timeout=3000)
-            page.wait_for_timeout(1500)
+        # 嘗試多種常見的德國/國際 Google 隱私權同意按鈕文字
+        selectors = [
+            "button:has-text('Alle ablehnen')",
+            "button:has-text('Alle akzeptieren')",
+            "button:has-text('Accept all')",
+            "button:has-text('Reject all')",
+            "form[action*='consent'] button",
+            "div[role='dialog'] button:last-child",
+        ]
+        for sel in selectors:
+            btn = page.locator(sel).first
+            if btn.count() > 0 and btn.is_visible():
+                btn.click(timeout=3000)
+                page.wait_for_timeout(1500)
+                break
     except Exception:
         pass
 
@@ -183,7 +215,7 @@ def _parse_card(card) -> PlaywrightFlight | None:
     if not combined_text:
         return None
 
-    # 【關鍵修正】：支援跨日標記（例如 12:00+1 或 12:00+2）的時間抓取
+    # 抓取起降時間（支援跨日 +1 / +2）
     times = re.findall(r"(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})(?:\+\d)?", inner_text)
     if not times:
         return None
