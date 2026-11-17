@@ -356,7 +356,7 @@ def render_professional_table(df: pd.DataFrame, currency: str, trip_label: str, 
     table_df = pd.DataFrame(table_rows)
     table_df["排名"] = table_df["排名"].astype(str).replace("nan", "").replace("None", "")
 
-    # 已將棄用的 use_container_width 升級為 width="stretch"
+    # 已完美替換棄用的 use_container_width 為 width="stretch"
     st.dataframe(table_df, width="stretch", hide_index=True)
 
     csv_data = view.to_csv(index=False).encode("utf-8-sig")
@@ -441,27 +441,48 @@ def search_tab() -> None:
 
                 rows: list[dict] = []
                 progress = st.progress(0.0, text="🩸 正在透過太陽之井魔網連線 Google Flights 查詢最低票價…")
+                debug_logs = []
+
                 for index, (segments, t_type) in enumerate(requests):
                     try:
-                        rows.extend(
-                            cached_search(
-                                segments,
-                                t_type,
-                                seat,
-                                config.settings.currency,
-                                config.settings.language,
-                                STOP_CHOICES[stops_label],
-                                int(carry_on_bags),
-                                int(checked_bags),
-                                False,
-                                False,
-                                True,
-                            )
+                        debug_logs.append(f"查詢航段: {segments}, 類型: {t_type}")
+                        result_batch = cached_search(
+                            segments,
+                            t_type,
+                            seat,
+                            config.settings.currency,
+                            config.settings.language,
+                            STOP_CHOICES[stops_label],
+                            int(carry_on_bags),
+                            int(checked_bags),
+                            False,
+                            False,
+                            True,
                         )
+                        rows.extend(result_batch)
+                        debug_logs.append(f"成功取得 {len(result_batch)} 筆報價。")
                     except Exception as exc:
-                        st.warning(f"查詢異常：{exc}")
+                        error_msg = str(exc)
+                        debug_logs.append(f"❌ 查詢異常: {error_msg}")
+                        st.warning(f"查詢異常：{error_msg}")
                     progress.progress((index + 1) / len(requests))
                 progress.empty()
+
+                # 即時展示 DEBUG 面板
+                with st.expander("🛠️ 點擊展開 Playwright 爬蟲 DEBUG 診斷記錄", expanded=False):
+                    st.text("--- 執行日誌 (Execution Logs) ---")
+                    for log_line in debug_logs:
+                        st.code(log_line, language="text")
+                    
+                    debug_file = Path("debug_page.html")
+                    if debug_file.exists():
+                        st.error("偵測到爬蟲未抓取到元素，已自動儲存 `debug_page.html`。")
+                        st.download_button(
+                            label="📥 下載 debug_page.html 進行人工分析",
+                            data=debug_file.read_bytes(),
+                            file_name="debug_page.html",
+                            mime="text/html"
+                        )
 
                 st.session_state["search_result"] = {
                     "trip_label": trip_label,
