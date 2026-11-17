@@ -1,4 +1,4 @@
-"""Playwright 最終對齊版：完美模擬手動點擊「最便宜分頁」與「按 Preis 排序下拉選單」 (src/playwright_fetcher.py)"""
+"""Playwright 終極直達版：放棄分頁點擊，直接強制按 Preis 排序與展開 (src/playwright_fetcher.py)"""
 from __future__ import annotations
 
 import logging
@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_MAX_RESULTS = 100
 DEFAULT_SCROLL_COUNT = 30
-DEFAULT_WAIT_MS = 3500
+DEFAULT_WAIT_MS = 4000
 
 _chromium_checked = False
 
@@ -97,20 +97,17 @@ def fetch_flights(
         try:
             log.info("[STEALTH] 正在連線 Google Flights: %s", query_url)
             page.goto("https://www.google.com/travel/flights", wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(random.randint(1500, 2500))
+            page.wait_for_timeout(random.randint(2000, 3000))
             
             page.goto(query_url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(4000)
+            page.wait_for_timeout(6000)
             
             _dismiss_consent_dialog(page)
             
-            # 步驟 1：點擊上方「Am günstigsten」（最便宜）分頁
-            _force_click_cheapest_tab(page)
-
-            # 步驟 2：【完全對應影片】點擊右側的排序選單並勾選按 Preis（價格）排序
+            # 【核心調整】：直接點擊右側排序選單並強制勾選 Preis
             _force_select_sort_by_price(page)
 
-            # 步驟 3：循環滾動與點擊展開「Mehr Flüge ansehen」按鈕
+            # 循環滾動與點擊展開「Mehr Flüge ansehen」按鈕
             last_height = 0
             for i in range(scroll_count):
                 _expand_all_hidden_flights(page)
@@ -124,7 +121,7 @@ def fetch_flights(
                 last_height = current_height
 
             _expand_all_hidden_flights(page)
-            page.wait_for_timeout(2000)
+            page.wait_for_timeout(3000)
 
             cards = page.query_selector_all("li, div[role='listitem']")
             if not cards:
@@ -177,43 +174,14 @@ def _dismiss_consent_dialog(page) -> None:
             btn = page.locator(sel).first
             if btn.count() > 0 and btn.is_visible():
                 btn.click(timeout=3000)
-                page.wait_for_timeout(1500)
+                page.wait_for_timeout(2000)
                 break
     except Exception:
         pass
 
 
-def _force_click_cheapest_tab(page) -> None:
-    try:
-        tab = page.locator("[role='tab']:has-text('Am günstigsten'), [role='tab']:has-text('Cheapest')").first
-        if tab.count() > 0 and tab.is_visible():
-            tab.click(force=True, timeout=5000)
-            log.info("[STEALTH] 成功點擊 'Am günstigsten' 分頁。")
-            page.wait_for_timeout(3000)
-            return
-
-        clicked = page.evaluate(
-            """() => {
-                const elements = Array.from(document.querySelectorAll('[role="tab"], button, div, span'));
-                for (const el of elements) {
-                    const txt = (el.innerText || el.getAttribute('aria-label') || '').toLowerCase();
-                    if (txt.includes('am günstigsten') || txt.includes('cheapest')) {
-                        el.click();
-                        return true;
-                    }
-                }
-                return false;
-            }"""
-        )
-        if clicked:
-            log.info("[STEALTH] 透過 JS 成功點擊 'Am günstigsten' 分頁。")
-            page.wait_for_timeout(3000)
-    except Exception as exc:
-        log.warning("[STEALTH] 點擊分頁異常：%s", exc)
-
-
 def _force_select_sort_by_price(page) -> None:
-    """精準模擬您影片中的動作：點擊右側「Nach Preis sortiert」按鈕，並在彈出選單中點擊「Preis」"""
+    """精準模擬您影片中的操作：點擊右側 'Nach Preis sortiert' 下拉選單並勾選 Preis"""
     try:
         clicked_menu = page.evaluate(
             """() => {
@@ -230,7 +198,7 @@ def _force_select_sort_by_price(page) -> None:
         )
         if clicked_menu:
             log.info("[STEALTH] 已點擊排序選單按鈕。")
-            page.wait_for_timeout(1500)
+            page.wait_for_timeout(2000)
             
             # 點擊彈出選單中的「Preis」
             page.evaluate(
@@ -238,7 +206,7 @@ def _force_select_sort_by_price(page) -> None:
                     const items = Array.from(document.querySelectorAll('div, span, [role="menuitem"], li, button'));
                     for (const item of items) {
                         const txt = (item.innerText || '').trim().toLowerCase();
-                        if (txt === 'preis' || txt.includes('günstigste flüge')) {
+                        if (txt === 'preis' || txt === 'price' || txt.includes('günstigste flüge')) {
                             item.click();
                             return true;
                         }
@@ -247,15 +215,28 @@ def _force_select_sort_by_price(page) -> None:
                 }"""
             )
             log.info("[STEALTH] 已成功在選單中勾選按 Preis 排序。")
-            page.wait_for_timeout(3000)
+            page.wait_for_timeout(4000)
         else:
-            log.info("[STEALTH] 未偵測到排序選單按鈕，可能已預設按價格排序。")
+            log.warning("[STEALTH] 未能自動點擊排序選單，嘗試使用備用 JS 點擊...")
+            page.evaluate(
+                """() => {
+                    const btns = Array.from(document.querySelectorAll('button, [role="button"]'));
+                    for (const b of btns) {
+                        if (b.innerText.toLowerCase().includes('preis') || b.innerText.toLowerCase().includes('price')) {
+                            b.click();
+                            return true;
+                        }
+                    }
+                    return false;
+                }"""
+            )
+            page.wait_for_timeout(3000)
     except Exception as exc:
         log.warning("[STEALTH] 選擇排序選單時發生異常：%s", exc)
 
 
 def _expand_all_hidden_flights(page) -> None:
-    """點擊「Mehr Flüge ansehen」等展開按鈕"""
+    """點擊 'Mehr Flüge ansehen' 等展開按鈕"""
     try:
         page.evaluate(
             """() => {
