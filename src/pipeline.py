@@ -1,8 +1,4 @@
-"""主流程：抓票價 → 對照歷史判定特價 → 寫入 data/。
-
-用法（在專案根目錄執行）：
-    python -m src.pipeline
-"""
+"""主流程：抓票價 → 對照歷史判定特價 → 寫入 data/ (src/pipeline.py)。"""
 from __future__ import annotations
 
 import logging
@@ -17,7 +13,6 @@ from .store import append_history, now_iso, read_history, write_snapshot
 
 log = logging.getLogger("flight-deals")
 
-# 歷史樣本不足此數時，不採用「低於中位數」規則，避免誤報
 MIN_SAMPLES_FOR_MEDIAN = 3
 
 BaselineKey = tuple[str, str, str]  # (出發地, 目的地, 出發日)
@@ -26,7 +21,7 @@ BaselineKey = tuple[str, str, str]  # (出發地, 目的地, 出發日)
 def build_baselines(
     history: list[dict[str, str]], currency: str = "EUR"
 ) -> dict[BaselineKey, list[int]]:
-    """依航線、出發日與幣別分組，避免不同貨幣的歷史價格混算。"""
+    """依航線、出發日與幣別分組。"""
     buckets: dict[BaselineKey, list[int]] = defaultdict(list)
     for row in history:
         if row.get("currency", "").upper() != currency.upper():
@@ -45,7 +40,7 @@ def build_baselines(
 
 
 def is_deal(price: int, prices: list[int], rules) -> bool:
-    """票價是否為特價：創歷史新低，或低於歷史中位數一定比例。"""
+    """票價是否為特價判定。"""
     if not prices:
         return False
     if rules.below_historical_min and price < min(prices):
@@ -65,9 +60,7 @@ def collect_offers(config: AppConfig, baselines: dict[BaselineKey, list[int]]) -
         seat=config.settings.seat,
         carry_on_bags=config.settings.carry_on_bags,
         checked_bags=config.settings.checked_bags,
-        hide_separate_and_self_transfer=(
-            config.settings.hide_separate_and_self_transfer
-        ),
+        hide_separate_and_self_transfer=config.settings.hide_separate_and_self_transfer,
         exclude_basic_economy=config.settings.exclude_basic_economy,
     )
     dates = config.departure_dates()
@@ -77,8 +70,10 @@ def collect_offers(config: AppConfig, baselines: dict[BaselineKey, list[int]]) -
     for route in config.routes:
         for departure_date in dates:
             try:
-                found = provider.search(route.from_airport, route.to_airport, departure_date)
-            except Exception as exc:  # 單條查詢失敗不中斷整批
+                # 【核心修正】：改用 search_itinerary 並符合單程結構定義
+                segments = [(route.from_airport, route.to_airport, departure_date)]
+                found = provider.search_itinerary(segments, trip_type="one-way")
+            except Exception as exc:
                 log.warning("查詢失敗 %s→%s %s: %s", route.from_airport, route.to_airport, departure_date, exc)
                 failures.append(
                     {
@@ -136,16 +131,6 @@ def run(config: AppConfig | None = None) -> dict[str, Any]:
     append_history(offers, observed_at, currency=config.settings.currency)
 
     log.info("完成：%d 筆行程、%d 筆特價，寫入 %s", len(offers), len(deals), path)
-    if deals:
-        for deal in deals[:10]:
-            log.info(
-                "特價 %s→%s %s %s %s",
-                deal["from_airport"],
-                deal["to_airport"],
-                deal["departure_date"],
-                deal["price"],
-                config.settings.currency,
-            )
     return payload
 
 
