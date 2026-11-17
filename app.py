@@ -4,7 +4,6 @@ from __future__ import annotations
 import json
 import os
 import sys
-import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from zoneinfo import ZoneInfo
@@ -356,7 +355,6 @@ def render_professional_table(df: pd.DataFrame, currency: str, trip_label: str, 
     table_df = pd.DataFrame(table_rows)
     table_df["排名"] = table_df["排名"].astype(str).replace("nan", "").replace("None", "")
 
-    # 已完美替換棄用的 use_container_width 為 width="stretch"
     st.dataframe(table_df, width="stretch", hide_index=True)
 
     csv_data = view.to_csv(index=False).encode("utf-8-sig")
@@ -430,13 +428,24 @@ def search_tab() -> None:
                 
                 requests = []
                 for outbound_date in dates:
-                    segments = [(origin, destination, outbound_date.isoformat())]
-                    if trip_label == "往返" and return_date:
+                    # 【核心修正】：嚴格依據航程模式建立航段，單程絕對不附加回程！
+                    if trip_label == "單程":
+                        segments = [(origin, destination, outbound_date.isoformat())]
+                    elif trip_label == "往返" and return_date:
                         ret_date_str = (return_date + (outbound_date - departure)).isoformat()
-                        segments.append((return_origin, return_destination, ret_date_str))
+                        segments = [
+                            (origin, destination, outbound_date.isoformat()),
+                            (return_origin, return_destination, ret_date_str)
+                        ]
                     elif trip_label == "開口行程" and return_date:
                         ret_date_str = (return_date + (outbound_date - departure)).isoformat()
-                        segments.append((return_origin, return_destination, ret_date_str))
+                        segments = [
+                            (origin, destination, outbound_date.isoformat()),
+                            (return_origin, return_destination, ret_date_str)
+                        ]
+                    else:
+                        segments = [(origin, destination, outbound_date.isoformat())]
+
                     requests.append((tuple(segments), trip_type))
 
                 rows: list[dict] = []
@@ -468,7 +477,6 @@ def search_tab() -> None:
                     progress.progress((index + 1) / len(requests))
                 progress.empty()
 
-                # 即時展示 DEBUG 面板
                 with st.expander("🛠️ 點擊展開 Playwright 爬蟲 DEBUG 診斷記錄", expanded=False):
                     st.text("--- 執行日誌 (Execution Logs) ---")
                     for log_line in debug_logs:
