@@ -9,7 +9,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MAX_RESULTS = 80
+DEFAULT_MAX_RESULTS = 45
 DEFAULT_SCROLL_COUNT = 30
 DEFAULT_WAIT_MS = 3000
 
