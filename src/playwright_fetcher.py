@@ -1,4 +1,4 @@
-"""Playwright 全量深度擷取：穩定防禦與高效渲染 (src/playwright_fetcher.py)"""
+"""Playwright 全量深度擷取：高效輕量、穩定滾動與精準票價航司解析 (src/playwright_fetcher.py)"""
 from __future__ import annotations
 
 import logging
@@ -7,9 +7,10 @@ from dataclasses import dataclass, field
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MAX_RESULTS = 150
-DEFAULT_SCROLL_COUNT = 30
-DEFAULT_WAIT_MS = 2000
+# 【效能優化】：將抓取上限與滾動次數調整至最佳平衡點，避免頁面加載過久或記憶體過載
+DEFAULT_MAX_RESULTS = 80
+DEFAULT_SCROLL_COUNT = 15
+DEFAULT_WAIT_MS = 1500
 
 _chromium_checked = False
 
@@ -90,7 +91,6 @@ def fetch_flights(
             _dismiss_consent_dialog(page)
             _ensure_cheapest_tab_selected(page)
 
-            # 寬鬆等待清單載入，不直接拋錯中斷
             try:
                 page.wait_for_selector("li, div[role='listitem'], div.pIav2d", timeout=10000)
             except Exception:
