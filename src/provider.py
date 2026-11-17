@@ -1,4 +1,4 @@
-"""Google Flights Provider 修正同目錄模組導入 (src/provider.py)"""
+"""Google Flights Provider 修正同目錄相對導入 (src/provider.py)"""
 from __future__ import annotations
 
 import logging
@@ -68,8 +68,8 @@ class GoogleFlightsProvider:
 
 
 def _convert_playwright_flight(f: Any, origin: str, dest: str, dep_date: str, trip_type: str) -> Any:
-    # 修正：因為 models.py 與 provider.py 同樣在 src/ 資料夾內，直接從 models 導入即可
-    from models import FlightOffer, FlightSegment
+    # 修正：使用相對導入 `.models`，完美對應同目錄模組
+    from .models import FlightOffer, FlightSegment
 
     seg = FlightSegment(
         from_airport=f.from_airport or origin,
