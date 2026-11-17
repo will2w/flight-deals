@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import sys
 from datetime import date, datetime, timedelta, timezone
@@ -167,6 +168,17 @@ def load_history() -> pd.DataFrame:
     return pd.read_csv(HISTORY_PATH)
 
 
+class StreamlitLogHandler(logging.Handler):
+    """自訂日誌收集器，將後端爬蟲的 log 即時收集並顯示在前端界面中"""
+    def __init__(self, log_list: list[str]):
+        super().__init__()
+        self.log_list = log_list
+
+    def emit(self, record):
+        log_entry = self.format(record)
+        self.log_list.append(log_entry)
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def cached_search(
     segments: tuple[tuple[str, str, str], ...],
@@ -180,25 +192,45 @@ def cached_search(
     hide_separate_and_self_transfer: bool,
     exclude_basic_economy: bool,
     use_playwright: bool = True,
-) -> list[dict]:
-    provider = GoogleFlightsProvider(
-        currency=currency,
-        language=language,
-        seat=seat,
-        carry_on_bags=carry_on_bags,
-        checked_bags=checked_bags,
-        hide_separate_and_self_transfer=hide_separate_and_self_transfer,
-        exclude_basic_economy=exclude_basic_economy,
-        use_playwright=use_playwright,
-    )
-    offers = provider.search_itinerary(
-        list(segments), trip_type=trip_type, max_stops=max_stops
-    )
-    quote_checked_at = datetime.now(timezone.utc).isoformat()
-    return [
-        {**offer.to_dict(), "quote_checked_at": quote_checked_at}
-        for offer in offers
-    ]
+) -> tuple[list[dict], list[str]]:
+    captured_logs: list[str] = []
+    
+    # 動態攔截 playwright_fetcher 與 provider 的 log
+    fetcher_logger = logging.getLogger("src.playwright_fetcher")
+    provider_logger = logging.getLogger("src.provider")
+    
+    handler = StreamlitLogHandler(captured_logs)
+    handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(message)s"))
+    
+    fetcher_logger.addHandler(handler)
+    provider_logger.addHandler(handler)
+    fetcher_logger.setLevel(logging.INFO)
+    provider_logger.setLevel(logging.INFO)
+
+    try:
+        provider = GoogleFlightsProvider(
+            currency=currency,
+            language=language,
+            seat=seat,
+            carry_on_bags=carry_on_bags,
+            checked_bags=checked_bags,
+            hide_separate_and_self_transfer=hide_separate_and_self_transfer,
+            exclude_basic_economy=exclude_basic_economy,
+            use_playwright=use_playwright,
+        )
+        offers = provider.search_itinerary(
+            list(segments), trip_type=trip_type, max_stops=max_stops
+        )
+        quote_checked_at = datetime.now(timezone.utc).isoformat()
+        results = [
+            {**offer.to_dict(), "quote_checked_at": quote_checked_at}
+            for offer in offers
+        ]
+    finally:
+        fetcher_logger.removeHandler(handler)
+        provider_logger.removeHandler(handler)
+
+    return results, captured_logs
 
 
 def mark_deals(rows: list[dict]) -> pd.DataFrame:
@@ -428,7 +460,6 @@ def search_tab() -> None:
                 
                 requests = []
                 for outbound_date in dates:
-                    # 【核心修正】：嚴格依據航程模式建立航段，單程絕對不附加回程！
                     if trip_label == "單程":
                         segments = [(origin, destination, outbound_date.isoformat())]
                     elif trip_label == "往返" and return_date:
@@ -449,13 +480,13 @@ def search_tab() -> None:
                     requests.append((tuple(segments), trip_type))
 
                 rows: list[dict] = []
+                all_debug_logs: list[str] = []
                 progress = st.progress(0.0, text="🩸 正在透過太陽之井魔網連線 Google Flights 查詢最低票價…")
-                debug_logs = []
 
                 for index, (segments, t_type) in enumerate(requests):
                     try:
-                        debug_logs.append(f"查詢航段: {segments}, 類型: {t_type}")
-                        result_batch = cached_search(
+                        all_debug_logs.append(f"--- 查詢航段: {segments}, 類型: {t_type} ---")
+                        result_batch, batch_logs = cached_search(
                             segments,
                             t_type,
                             seat,
@@ -464,23 +495,27 @@ def search_tab() -> None:
                             STOP_CHOICES[stops_label],
                             int(carry_on_bags),
                             int(checked_bags),
-                            False,
+                            True,
                             False,
                             True,
                         )
                         rows.extend(result_batch)
-                        debug_logs.append(f"成功取得 {len(result_batch)} 筆報價。")
+                        all_debug_logs.extend(batch_logs)
                     except Exception as exc:
                         error_msg = str(exc)
-                        debug_logs.append(f"❌ 查詢異常: {error_msg}")
+                        all_debug_logs.append(f"❌ 查詢異常: {error_msg}")
                         st.warning(f"查詢異常：{error_msg}")
                     progress.progress((index + 1) / len(requests))
                 progress.empty()
 
-                with st.expander("🛠️ 點擊展開 Playwright 爬蟲 DEBUG 診斷記錄", expanded=False):
-                    st.text("--- 執行日誌 (Execution Logs) ---")
-                    for log_line in debug_logs:
-                        st.code(log_line, language="text")
+                # 【前端視覺化展示】：將後端收集到的所有爬蟲價格陣列與除錯日誌完整印在介面上
+                with st.expander("🛠️ 點擊展開 Playwright 爬蟲 DEBUG 診斷記錄與價格陣列", expanded=True):
+                    st.text("--- Playwright 爬蟲實時執行與價格解析日誌 ---")
+                    for log_line in all_debug_logs:
+                        if "DEBUG_CARD" in log_line:
+                            st.markdown(f"<code style='color: #fde047;'>{log_line}</code>", unsafe_allow_html=True)
+                        else:
+                            st.text(log_line)
                     
                     debug_file = Path("debug_page.html")
                     if debug_file.exists():
@@ -639,9 +674,9 @@ def trend_tab() -> None:
     st.subheader(f"📈 航線 {chart_route}（出發日：{chart_date}）價格走勢監控")
     
     chart_df = pd.DataFrame({
-        "觀測時間": lowest.index.tz_convert(ZoneInfo("Europe/Berlin")).strftime("%Y-%m-%d %H:%M"),
+        "观測時間": lowest.index.tz_convert(ZoneInfo("Europe/Berlin")).strftime("%Y-%m-%d %H:%M"),
         "最低票價 (EUR)": lowest.values
-    }).set_index("觀測時間")
+    }).set_index("观測時間")
 
     st.line_chart(chart_df, y_label="最低票價 (EUR)", color="#f59e0b")
 
