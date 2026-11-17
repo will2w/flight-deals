@@ -1,4 +1,4 @@
-"""Playwright 終極修復：精準捕捉真實票價與全量航線解析 (src/playwright_fetcher.py)"""
+"""Playwright 終極修復：強制鎖定 Am günstigsten 分頁與精準低價擷取 (src/playwright_fetcher.py)"""
 from __future__ import annotations
 
 import logging
@@ -100,10 +100,12 @@ def fetch_flights(
             page.wait_for_timeout(random.randint(1500, 2500))
             
             page.goto(query_url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(3000)
+            page.wait_for_timeout(3500)
             
             _dismiss_consent_dialog(page)
-            _ensure_cheapest_tab_selected(page)
+            
+            # 【關鍵升級】：強力切換至「Am günstigsten」（最便宜）分頁並等待載入
+            _force_click_cheapest_tab(page)
 
             for _ in range(scroll_count):
                 _expand_all_hidden_flights(page)
@@ -167,15 +169,29 @@ def _dismiss_consent_dialog(page) -> None:
         pass
 
 
-def _ensure_cheapest_tab_selected(page) -> None:
+def _force_click_cheapest_tab(page) -> None:
+    """強制以 JS 點擊 'Am günstigsten' 分頁，確保抓到絕對最低價"""
     try:
-        tab = page.locator("[role='tab']:has-text('Am günstigsten'), [role='tab']:has-text('Cheapest')").first
-        if tab.count() > 0 and tab.is_visible():
-            if tab.get_attribute("aria-selected") != "true":
-                tab.click(force=True, timeout=3000)
-                page.wait_for_timeout(2000)
-    except Exception:
-        pass
+        clicked = page.evaluate(
+            """() => {
+                const elements = Array.from(document.querySelectorAll('[role="tab"], button, div, span'));
+                for (const el of elements) {
+                    const txt = (el.innerText || el.getAttribute('aria-label') || '').toLowerCase();
+                    if (txt.includes('am günstigsten') || txt.includes('cheapest')) {
+                        el.click();
+                        return true;
+                    }
+                }
+                return false;
+            }"""
+        )
+        if clicked:
+            log.info("[STEALTH] 成功切換至 'Am günstigsten' 分頁。")
+            page.wait_for_timeout(3000)  # 等待最便宜排序結果渲染
+        else:
+            log.warning("[STEALTH] 未找到 'Am günstigsten' 分頁按鈕，維持預設檢視。")
+    except Exception as exc:
+        log.warning("[STEALTH] 切換分頁異常：%s", exc)
 
 
 def _expand_all_hidden_flights(page) -> None:
@@ -209,13 +225,12 @@ def _parse_card(card) -> PlaywrightFlight | None:
     if not times:
         return None
 
-    # 【關鍵修復】：使用專門抓取歐元符號緊鄰數字的嚴格價格解析
     prices = _extract_exact_prices(combined_text)
     if not prices:
         return None
 
     prices = sorted(list(set(prices)))
-    primary_price = prices[0]  # 取抓到的最低有效票價作為主價格
+    primary_price = prices[0]
     ota_price = prices[1] if len(prices) > 1 else None
 
     flight = PlaywrightFlight(
@@ -266,7 +281,6 @@ def _parse_global_text(body_text: str) -> list[PlaywrightFlight]:
 
 
 def _extract_exact_prices(text: str) -> list[int]:
-    # 【精準價格過濾】：強制匹配帶有 € 或 EUR 且數值在合理機票範圍內的數字
     patterns = [
         r"€\s*([\d.]+)",
         r"([\d.]+)\s*€",
