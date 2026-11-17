@@ -356,7 +356,8 @@ def render_professional_table(df: pd.DataFrame, currency: str, trip_label: str, 
     table_df = pd.DataFrame(table_rows)
     table_df["排名"] = table_df["排名"].astype(str).replace("nan", "").replace("None", "")
 
-    st.dataframe(table_df, use_container_width=True, hide_index=True)
+    # 已將棄用的 use_container_width 升級為 width="stretch"
+    st.dataframe(table_df, width="stretch", hide_index=True)
 
     csv_data = view.to_csv(index=False).encode("utf-8-sig")
     st.download_button(
