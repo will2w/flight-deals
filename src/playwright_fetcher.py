@@ -1,4 +1,4 @@
-"""Playwright 終極除錯版：完整診斷卡片文字與價格提取過程 (src/playwright_fetcher.py)"""
+"""Playwright 終極修復版：精準點擊排序選單並強制選擇按價格排序 (src/playwright_fetcher.py)"""
 from __future__ import annotations
 
 import logging
@@ -11,7 +11,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_MAX_RESULTS = 100
 DEFAULT_SCROLL_COUNT = 30
-DEFAULT_WAIT_MS = 3000
+DEFAULT_WAIT_MS = 3500
 
 _chromium_checked = False
 
@@ -104,10 +104,13 @@ def fetch_flights(
             
             _dismiss_consent_dialog(page)
             
-            # 1. 強制點擊「Am günstigsten」（最便宜）分頁
+            # 1. 點擊「Am günstigsten」分頁
             _force_click_cheapest_tab(page)
 
-            # 2. 循環滾動與點擊展開更多航班
+            # 2. 【新增】：強制點擊排序下拉選單，並選擇按價格排序（對應您的截圖）
+            _force_select_sort_by_price(page)
+
+            # 3. 循環滾動與點擊展開更多航班
             last_height = 0
             for i in range(scroll_count):
                 _expand_all_hidden_flights(page)
@@ -185,8 +188,8 @@ def _force_click_cheapest_tab(page) -> None:
         tab = page.locator("[role='tab']:has-text('Am günstigsten'), [role='tab']:has-text('Cheapest')").first
         if tab.count() > 0 and tab.is_visible():
             tab.click(force=True, timeout=5000)
-            log.info("[STEALTH] 透過 Locator 成功點擊 'Am günstigsten' 分頁。")
-            page.wait_for_timeout(4000)
+            log.info("[STEALTH] 成功點擊 'Am günstigsten' 分頁。")
+            page.wait_for_timeout(3000)
             return
 
         clicked = page.evaluate(
@@ -204,9 +207,50 @@ def _force_click_cheapest_tab(page) -> None:
         )
         if clicked:
             log.info("[STEALTH] 透過 JS 成功點擊 'Am günstigsten' 分頁。")
-            page.wait_for_timeout(4000)
+            page.wait_for_timeout(3000)
     except Exception as exc:
         log.warning("[STEALTH] 點擊分頁異常：%s", exc)
+
+
+def _force_select_sort_by_price(page) -> None:
+    """模擬您截圖中的動作：點擊排序按鈕並選擇按 Preis / 價格排序"""
+    try:
+        # 尋找並點擊包含「Nach Preis sortiert」或「Sort by price」的按鈕
+        clicked_menu = page.evaluate(
+            """() => {
+                const elements = Array.from(document.querySelectorAll('button, div[role="button"], span'));
+                for (const el of elements) {
+                    const txt = (el.innerText || '').toLowerCase();
+                    if (txt.includes('nach preis') || txt.includes('sort by price') || txt.includes('preis')) {
+                        el.click();
+                        return true;
+                    }
+                }
+                return false;
+            }"""
+        )
+        if clicked_menu:
+            log.info("[STEALTH] 已點擊排序選單按鈕。")
+            page.wait_for_timeout(1500)
+            
+            # 接著點擊彈出選單中的「Preis」或「Günstigste Flüge」
+            page.evaluate(
+                """() => {
+                    const items = Array.from(document.querySelectorAll('div, span, [role="menuitem"], li'));
+                    for (const item of items) {
+                        const txt = (item.innerText || '').toLowerCase();
+                        if (txt.trim() === 'preis' || txt.includes('günstigste flüge')) {
+                            item.click();
+                            return true;
+                        }
+                    }
+                    return false;
+                }"""
+            )
+            log.info("[STEALTH] 已成功選擇價格排序。")
+            page.wait_for_timeout(3000)
+    except Exception as exc:
+        log.warning("[STEALTH] 選擇排序選單時發生異常：%s", exc)
 
 
 def _expand_all_hidden_flights(page) -> None:
@@ -245,7 +289,6 @@ def _parse_card(card, card_idx: int) -> PlaywrightFlight | None:
     lower_text = combined_text.lower()
     excluded_keywords = ["eigener transfer", "self-transfer", "separates ticket", "flughafenwechsel"]
     if any(kw in lower_text for kw in excluded_keywords):
-        log.debug("[PARSE] 卡片 %d 包含自行轉機，已過濾。", card_idx)
         return None
 
     times = re.findall(r"(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})(?:\+\d+)?", inner_text)
@@ -254,16 +297,14 @@ def _parse_card(card, card_idx: int) -> PlaywrightFlight | None:
 
     prices = _extract_exact_prices(combined_text)
     if not prices:
-        log.debug("[PARSE] 卡片 %d 未能提取到任何有效價格。原始文字:\n%s", card_idx, inner_text[:200])
         return None
 
     prices = sorted(list(set(prices)))
     primary_price = prices[0]
     ota_price = prices[1] if len(prices) > 1 else None
 
-    # 【DEBUG 核心】：把抓到的價格與對應文字印到日誌中，方便您在前端展開查看
-    log.info("[DEBUG_CARD %d] 提取價格陣列: %s -> 採用主票價: €%s | 航空公司/內容片段: %s", 
-             card_idx, prices, primary_price, inner_text.replace('\n', ' ')[:100])
+    log.info("[DEBUG_CARD %d] 提取價格陣列: %s -> 採用主票價: €%s | 內容: %s", 
+             card_idx, prices, primary_price, inner_text.replace('\n', ' ')[:80])
 
     flight = PlaywrightFlight(
         price=primary_price,
@@ -318,7 +359,6 @@ def _parse_global_text(body_text: str) -> list[PlaywrightFlight]:
 
 
 def _extract_exact_prices(text: str) -> list[int]:
-    # 嚴格匹配帶有 € 或 EUR 的金額格式，避免抓到時長或 CO2 數值
     patterns = [
         r"€\s*([\d.]+)",
         r"([\d.]+)\s*€",
