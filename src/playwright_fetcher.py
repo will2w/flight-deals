@@ -1,4 +1,4 @@
-"""Playwright 全量深度擷取：強制 Am günstigsten 排序與完美抓取 (src/playwright_fetcher.py)"""
+"""Playwright 全量深度擷取：強制加載等待、自動展開與精準票價航司解析 (src/playwright_fetcher.py)"""
 from __future__ import annotations
 
 import logging
@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 log = logging.getLogger(__name__)
 
 DEFAULT_MAX_RESULTS = 150
-DEFAULT_SCROLL_COUNT = 30
+DEFAULT_SCROLL_COUNT = 35
 DEFAULT_WAIT_MS = 2500
 
 _chromium_checked = False
@@ -85,13 +85,17 @@ def fetch_flights(
         try:
             log.info("正在連線 Google Flights 網址: %s", query_url)
             page.goto(query_url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(3000)
+            
+            # 【關鍵加載等待】：等待頁面初始架構完全渲染
+            page.wait_for_timeout(4000)
             
             _dismiss_consent_dialog(page)
             
-            # 【關鍵升級】：強制點擊並切換至「Am günstigsten（最便宜）」分頁
+            # 【關鍵加載等待】：強制切換至「Am günstigsten（最便宜）」分頁並等待載入
             _ensure_cheapest_tab_selected(page)
+            page.wait_for_timeout(3000)
 
+            # 循環滾動並自動點擊「Mehr Flüge ansehen / 顯示更多」按鈕以載入所有低價航班
             for _ in range(scroll_count):
                 _expand_all_hidden_flights(page)
                 page.evaluate("window.scrollBy(0, 4000)")
@@ -167,14 +171,17 @@ def _ensure_cheapest_tab_selected(page) -> None:
 
 
 def _expand_all_hidden_flights(page) -> None:
+    """【關鍵升級】：自動點擊「Mehr Flüge ansehen」、「Weitere Flüge」等展開按鈕"""
     try:
         page.evaluate(
             """() => {
-                const keywords = ['weitere flüge', 'mehr flüge', 'more flights', 'show more', 'günstigere', 'cheaper', '顯示更多', '更多航班'];
-                const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
+                const keywords = ['mehr flüge ansehen', 'weitere flüge', 'mehr flüge', 'more flights', 'show more', 'günstigere', 'cheaper', '顯示更多', '更多航班'];
+                const buttons = Array.from(document.querySelectorAll('button, [role="button"], div[role="button"]'));
                 for (const btn of buttons) {
                     const txt = (btn.innerText || btn.getAttribute('aria-label') || '').toLowerCase();
-                    if (keywords.some(kw => txt.includes(kw))) btn.click();
+                    if (keywords.some(kw => txt.includes(kw))) {
+                        btn.click();
+                    }
                 }
             }"""
         )
@@ -199,9 +206,11 @@ def _parse_card(card) -> PlaywrightFlight | None:
         return None
 
     lowest_price = prices[0]  # 嚴格取真正的最低票價
+    ota_price = prices[1] if len(prices) > 1 else None
 
     flight = PlaywrightFlight(
         price=lowest_price,
+        ota_price=ota_price,
         departure_time=times[0][0],
         arrival_time=times[0][1],
     )
