@@ -1,4 +1,4 @@
-"""Google Flights 供應商轉接層：完美支援單程、往返與開口行程 (src/provider.py)"""
+"""Google Flights 供應商轉接層：完美支援過濾自行轉機與多航段 (src/provider.py)"""
 from __future__ import annotations
 
 import logging
@@ -46,7 +46,7 @@ class GoogleFlightsProvider:
         seat: str = "economy",
         carry_on_bags: int = 0,
         checked_bags: int = 0,
-        hide_separate_and_self_transfer: bool = False,
+        hide_separate_and_self_transfer: bool = True,  # 預設開啟過濾自行轉機
         exclude_basic_economy: bool = False,
         use_playwright: bool = True,
     ) -> None:
@@ -68,10 +68,8 @@ class GoogleFlightsProvider:
         first_seg = segments[0]
         origin, destination, dep_date = first_seg[0], first_seg[1], first_seg[2]
 
-        # 構建精準帶有搜尋參數的 Google Flights 查詢網址
         base_url = "https://www.google.com/travel/flights"
         
-        # 【核心修正】：嚴格區分單程、往返與開口行程的 Google 查詢字串
         if trip_type == "round-trip" and len(segments) > 1:
             ret_seg = segments[1]
             ret_origin, ret_dest, ret_date = ret_seg[0], ret_seg[1], ret_seg[2]
@@ -87,7 +85,7 @@ class GoogleFlightsProvider:
 
         log.info("[PROVIDER] 發起 Google Flights 查詢網址: %s", query_url)
 
-        # 呼叫 Playwright 擷取
+        # 呼叫 Playwright 擷取（已在 fetch_flights 中過濾自行轉機）
         pw_flights = fetch_flights(query_url, headless=True)
 
         offers: list[FlightOffer] = []
