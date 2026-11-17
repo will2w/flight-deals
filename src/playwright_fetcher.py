@@ -1,4 +1,4 @@
-"""Playwright 全量深度擷取：強制加載等待、自動展開與精準票價航司解析 (src/playwright_fetcher.py)"""
+"""Playwright 全量深度擷取：萬用防禦與全域文字強固解析 (src/playwright_fetcher.py)"""
 from __future__ import annotations
 
 import logging
@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 log = logging.getLogger(__name__)
 
 DEFAULT_MAX_RESULTS = 150
-DEFAULT_SCROLL_COUNT = 35
+DEFAULT_SCROLL_COUNT = 30
 DEFAULT_WAIT_MS = 2500
 
 _chromium_checked = False
@@ -85,25 +85,24 @@ def fetch_flights(
         try:
             log.info("正在連線 Google Flights 網址: %s", query_url)
             page.goto(query_url, wait_until="domcontentloaded", timeout=60000)
-            
-            # 【關鍵加載等待】：等待頁面初始架構完全渲染
             page.wait_for_timeout(4000)
             
             _dismiss_consent_dialog(page)
-            
-            # 【關鍵加載等待】：強制切換至「Am günstigsten（最便宜）」分頁並等待載入
             _ensure_cheapest_tab_selected(page)
             page.wait_for_timeout(3000)
 
-            # 循環滾動並自動點擊「Mehr Flüge ansehen / 顯示更多」按鈕以載入所有低價航班
+            # 滾動頁面載入動態航班
             for _ in range(scroll_count):
                 _expand_all_hidden_flights(page)
                 page.evaluate("window.scrollBy(0, 4000)")
                 page.wait_for_timeout(DEFAULT_WAIT_MS)
 
+            # 多重選擇器防禦：優先抓標準卡片，若無則退回到所有區塊元素
             cards = page.query_selector_all("li, div[role='listitem'], div.pIav2d, div.FlightsCtn, div.y11eBe, div.gws-flights-results__itinerary-card")
             if not cards:
-                cards = page.query_selector_all("div")
+                cards = page.query_selector_all("div, article")
+
+            log.info("共找到 %d 個候選容器，開始解析...", len(cards))
 
             for card in cards:
                 try:
@@ -112,11 +111,20 @@ def fetch_flights(
                         flights.append(flight)
                 except Exception as exc:
                     log.debug("略過卡片：%s", exc)
+
+            # 【終極防禦】：如果直接解析卡片為空，嘗試撈取整個頁面的文字區塊進行備用全域解析
+            if not flights:
+                log.warning("標準卡片解析為空，啟動全頁文字強固備用解析...")
+                body_text = page.evaluate("() => document.body.innerText") or ""
+                fallback_flights = _parse_global_text(body_text)
+                if fallback_flights:
+                    flights.extend(fallback_flights)
+
         finally:
             browser.close()
 
     if not flights:
-        raise RuntimeError("Playwright 擷取未取得任何航班結果。請確認網路連線或 Google Flights 網址是否正確。")
+        raise RuntimeError("Playwright 擷取未取得任何航班結果。請確認網路連線、Google Flights 網址或 Google 反爬限制是否正確。")
 
     seen: set[tuple] = set()
     unique: list[PlaywrightFlight] = []
@@ -126,6 +134,7 @@ def fetch_flights(
             continue
         seen.add(key)
         unique.append(f)
+    
     unique.sort(key=lambda f: (f.price or 10**9, f.duration_minutes))
     return unique[:max_results]
 
@@ -151,7 +160,6 @@ def _dismiss_consent_dialog(page) -> None:
 
 
 def _ensure_cheapest_tab_selected(page) -> None:
-    """【關鍵升級】：使用 JavaScript 強制點擊「Am günstigsten」分頁，確保取得最便宜票價"""
     try:
         page.evaluate(
             """() => {
@@ -171,7 +179,6 @@ def _ensure_cheapest_tab_selected(page) -> None:
 
 
 def _expand_all_hidden_flights(page) -> None:
-    """【關鍵升級】：自動點擊「Mehr Flüge ansehen」、「Weitere Flüge」等展開按鈕"""
     try:
         page.evaluate(
             """() => {
@@ -205,7 +212,7 @@ def _parse_card(card) -> PlaywrightFlight | None:
     if not prices:
         return None
 
-    lowest_price = prices[0]  # 嚴格取真正的最低票價
+    lowest_price = prices[0]
     ota_price = prices[1] if len(prices) > 1 else None
 
     flight = PlaywrightFlight(
@@ -234,6 +241,27 @@ def _parse_card(card) -> PlaywrightFlight | None:
     flight.airlines = _extract_airlines(card, inner_text)
     flight.is_best = bool(re.search(r"(?i)(beste flüge|top flights|最佳航班)", combined_text))
     return flight
+
+
+def _parse_global_text(body_text: str) -> list[PlaywrightFlight]:
+    """當卡片選擇器完全失效時的備用全域文字切片解析"""
+    flights: list[PlaywrightFlight] = []
+    blocks = body_text.split("\n")
+    # 簡單將連續行組合並尋找時間與價格
+    for i in range(len(blocks) - 3):
+        chunk = "\n".join(blocks[max(0, i-2):min(len(blocks), i+5)])
+        times = re.findall(r"(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})(?:\+\d+)?", chunk)
+        prices = _extract_true_prices(chunk)
+        if times and prices:
+            flights.append(
+                PlaywrightFlight(
+                    price=prices[0],
+                    departure_time=times[0][0],
+                    arrival_time=times[0][1],
+                    stops=0 if "nonstop" in chunk.lower() or "direkt" in chunk.lower() else 1
+                )
+            )
+    return flights
 
 
 def _extract_true_prices(text: str) -> list[int]:
