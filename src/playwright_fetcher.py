@@ -1,15 +1,16 @@
-"""Playwright 全量深度擷取：完美支援 +3 跨日標記與 Eigener Transfer 解析 (src/playwright_fetcher.py)"""
+"""Playwright 全量深度擷取：萬用容器匹配與強固解析 (src/playwright_fetcher.py)"""
 from __future__ import annotations
 
 import logging
 import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MAX_RESULTS = 150
-DEFAULT_SCROLL_COUNT = 30
-DEFAULT_WAIT_MS = 1500
+DEFAULT_MAX_RESULTS = 80
+DEFAULT_SCROLL_COUNT = 15
+DEFAULT_WAIT_MS = 2000
 
 _chromium_checked = False
 
@@ -69,52 +70,50 @@ def fetch_flights(
                 "--disable-setuid-sandbox",
                 "--disable-dev-shm-usage",
                 "--disable-gpu",
+                "--disable-infobars",
+                "--disable-extensions",
                 "--disable-blink-features=AutomationControlled",
-                "--window-size=1440,1200",
+                "--window-size=1920,1080",
             ],
         )
         context = browser.new_context(
             locale="de-DE",
             timezone_id="Europe/Berlin",
             user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-            viewport={"width": 1440, "height": 1200},
+            viewport={"width": 1920, "height": 1080},
         )
-        context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        
+        context.add_init_script(
+            """
+            Object.defineProperty(navigator, 'webdriver', { get: () => undefined });
+            window.navigator.chrome = { runtime: {} };
+            Object.defineProperty(navigator, 'languages', { get: () => ['de-DE', 'de', 'en-US', 'en'] });
+            """
+        )
+        
         page = context.new_page()
 
         try:
             log.info("正在連線 Google Flights 網址: %s", query_url)
             page.goto(query_url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(2000)
+            page.wait_for_timeout(3000)
             
             _dismiss_consent_dialog(page)
             _ensure_cheapest_tab_selected(page)
 
-            try:
-                page.wait_for_selector("li, div[role='listitem']", timeout=15000)
-            except Exception:
-                log.warning("未能在預設時間內找到清單元素，嘗試繼續滾動渲染...")
-
-            prev_count = 0
-            stagnant_rounds = 0
+            # 滾動頁面加載非同步航班卡片
             for _ in range(scroll_count):
                 _expand_all_hidden_flights(page)
                 page.evaluate("window.scrollBy(0, 4000)")
                 page.wait_for_timeout(DEFAULT_WAIT_MS)
-                _expand_all_hidden_flights(page)
 
-                current = _count_visible_cards(page)
-                if current <= prev_count:
-                    stagnant_rounds += 1
-                    if stagnant_rounds >= 3 and current > 0:
-                        break
-                else:
-                    stagnant_rounds = 0
-                prev_count = current
-                if current >= max_results * 3:
-                    break
+            # 【萬用容器防禦】：同時擷取多種可能的 Google Flights 列表容器
+            cards = page.query_selector_all("li, div[role='listitem'], div.pIav2d, div.FlightsCtn, div.y11eBe, div.gws-flights-results__itinerary-card")
+            if not cards:
+                cards = page.query_selector_all("div")
 
-            cards = page.query_selector_all("li, div[role='listitem']")
+            log.info("檢索到候選元素數量: %d，開始解析...", len(cards))
+
             for card in cards:
                 try:
                     flight = _parse_card(card)
@@ -122,11 +121,25 @@ def fetch_flights(
                         flights.append(flight)
                 except Exception as exc:
                     log.debug("略過卡片：%s", exc)
+
+            # 【終極備用方案】：如果卡片解析為空，嘗試全域文字備用解析
+            if not flights:
+                log.warning("標準卡片解析為 0 筆，啟動全域文字強固備用解析...")
+                try:
+                    html_content = page.content()
+                    Path("debug_page.html").write_text(html_content, encoding="utf-8")
+                except Exception:
+                    pass
+                
+                body_text = page.evaluate("() => document.body.innerText") or ""
+                if "€" in body_text and re.search(r"\d{1,2}:\d{2}", body_text):
+                    flights = _parse_global_text(body_text)
+
         finally:
             browser.close()
 
     if not flights:
-        raise RuntimeError("Playwright 擷取未取得任何航班結果。請確認網路連線或 Google Flights 網址是否正確。")
+        raise RuntimeError("Playwright 擷取未取得任何航班結果（已自動儲存 debug_page.html，請檢查是否觸發 Google 反爬驗證）。")
 
     seen: set[tuple] = set()
     unique: list[PlaywrightFlight] = []
@@ -162,13 +175,21 @@ def _dismiss_consent_dialog(page) -> None:
 
 def _ensure_cheapest_tab_selected(page) -> None:
     try:
-        tab = page.locator("[role='tab']:has-text('Am günstigsten'), [role='tab']:has-text('Cheapest')").first
-        if tab.count() > 0 and tab.is_visible():
-            if tab.get_attribute("aria-selected") != "true":
-                tab.click(force=True, timeout=3000)
-                page.wait_for_timeout(1500)
-    except Exception:
-        pass
+        page.evaluate(
+            """() => {
+                const tabs = Array.from(document.querySelectorAll('[role="tab"], button, div'));
+                for (const tab of tabs) {
+                    const txt = (tab.innerText || tab.getAttribute('aria-label') || '').toLowerCase();
+                    if (txt.includes('am günstigsten') || txt.includes('cheapest')) {
+                        tab.click();
+                        break;
+                    }
+                }
+            }"""
+        )
+        page.wait_for_timeout(2500)
+    except Exception as exc:
+        log.warning("切換最便宜分頁失敗：%s", exc)
 
 
 def _expand_all_hidden_flights(page) -> None:
@@ -176,7 +197,7 @@ def _expand_all_hidden_flights(page) -> None:
         page.evaluate(
             """() => {
                 const keywords = ['weitere flüge', 'mehr flüge', 'more flights', 'show more', 'günstigere', 'cheaper', '顯示更多', '更多航班'];
-                const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
+                const buttons = Array.from(document.querySelectorAll('button, [role="button"], div[role="button"]'));
                 for (const btn of buttons) {
                     const txt = (btn.innerText || btn.getAttribute('aria-label') || '').toLowerCase();
                     if (keywords.some(kw => txt.includes(kw))) btn.click();
@@ -187,30 +208,14 @@ def _expand_all_hidden_flights(page) -> None:
         pass
 
 
-def _count_visible_cards(page) -> int:
-    try:
-        return page.evaluate(
-            """() => {
-                const items = Array.from(document.querySelectorAll("li, div[role='listitem']"));
-                return items.filter(el => !el.querySelector("li, div[role='listitem']") && /\\d{1,2}:\\d{2}/.test(el.innerText || '')).length;
-            }"""
-        )
-    except Exception:
-        return 0
-
-
 def _parse_card(card) -> PlaywrightFlight | None:
-    if card.query_selector("li, div[role='listitem']") is not None:
-        return None
-
     inner_text = card.inner_text() or ""
     aria_label = card.get_attribute("aria-label") or ""
     
     combined_text = f"{inner_text}\n{aria_label}".strip()
-    if not combined_text:
+    if not combined_text or "€" not in combined_text or not re.search(r"\d{1,2}:\d{2}", combined_text):
         return None
 
-    # 【關鍵升級】：完美支援任意跨日標記（+1, +2, +3 等）
     times = re.findall(r"(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})(?:\+\d+)?", inner_text)
     if not times:
         return None
@@ -251,6 +256,25 @@ def _parse_card(card) -> PlaywrightFlight | None:
     return flight
 
 
+def _parse_global_text(body_text: str) -> list[PlaywrightFlight]:
+    flights: list[PlaywrightFlight] = []
+    blocks = body_text.split("\n")
+    for i in range(len(blocks) - 3):
+        chunk = "\n".join(blocks[max(0, i-2):min(len(blocks), i+5)])
+        times = re.findall(r"(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})(?:\+\d+)?", chunk)
+        prices = _extract_all_prices(chunk)
+        if times and prices:
+            flights.append(
+                PlaywrightFlight(
+                    price=prices[0],
+                    departure_time=times[0][0],
+                    arrival_time=times[0][1],
+                    stops=0 if "nonstop" in chunk.lower() or "direkt" in chunk.lower() else 1
+                )
+            )
+    return flights
+
+
 def _extract_all_prices(text: str) -> list[int]:
     patterns = [
         r"€\s*([\d.]+)",
@@ -283,20 +307,32 @@ def _extract_duration(text: str) -> int:
 
 def _extract_airlines(card, text: str) -> list[str]:
     airlines: list[str] = []
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-    for line in lines:
-        l_lower = line.lower()
-        # 過濾雜訊與自行轉機標籤行
-        if any(kw in l_lower for kw in ["€", "eur", "std.", "min.", "co2", "stopp", "nonstop", "geschätzt", "kg", "durchschn", "eigener transfer", "flughafenwechsel"]):
-            continue
-        cleaned_line = re.sub(r"(?i)^(eigener transfer|self-transfer|separates ticket)\s*[·•\-]\s*", "", line).strip()
-        if not cleaned_line or cleaned_line.lower() in {"eigener transfer", "self-transfer"}:
-            continue
-        if 2 <= len(cleaned_line) <= 75:
-            for part in re.split(r"[,、·•]", cleaned_line):
-                part_clean = part.strip().rstrip(".")
-                if part_clean and not part_clean.isupper() and part_clean.lower() not in {"eigener transfer", "self-transfer", "flughafenwechsel"}:
-                    airlines.append(part_clean)
-            if airlines:
-                break
+    try:
+        imgs = card.query_selector_all("img")
+        for img in imgs:
+            alt = img.get_attribute("alt") or img.get_attribute("title") or ""
+            alt = alt.strip()
+            if alt and len(alt) >= 2 and alt.lower() not in {"logo", "flight", "flug", "icon", "airline"}:
+                if alt not in airlines:
+                    airlines.append(alt)
+    except Exception:
+        pass
+
+    if not airlines:
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        for line in lines:
+            l_lower = line.lower()
+            if any(kw in l_lower for kw in ["€", "eur", "std.", "min.", "co2", "stopp", "nonstop", "geschätzt", "kg", "durchschn", "eigener transfer", "flughafenwechsel"]):
+                continue
+            cleaned_line = re.sub(r"(?i)^(eigener transfer|self-transfer|separates ticket)\s*[·•\-]\s*", "", line).strip()
+            if not cleaned_line or cleaned_line.lower() in {"eigener transfer", "self-transfer"}:
+                continue
+            if 2 <= len(cleaned_line) <= 75:
+                for part in re.split(r"[,、·•]", cleaned_line):
+                    part_clean = part.strip().rstrip(".")
+                    if part_clean and not part_clean.isupper() and not re.match(r"^\d{1,2}:\d{2}", part_clean):
+                        if part_clean.lower() not in {"eigener transfer", "self-transfer", "flughafenwechsel"}:
+                            airlines.append(part_clean)
+                if airlines:
+                    break
     return list(dict.fromkeys(airlines))
