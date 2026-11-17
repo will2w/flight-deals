@@ -1,4 +1,4 @@
-"""Playwright 終極修復：強制鎖定 Am günstigsten 分頁與絕對最低價鎖定 (src/playwright_fetcher.py)"""
+"""Playwright 終極修復：強制鎖定 Am günstigsten 分頁 + 徹底過濾 Eigener Transfer 自行轉機 (src/playwright_fetcher.py)"""
 from __future__ import annotations
 
 import logging
@@ -225,6 +225,12 @@ def _parse_card(card) -> PlaywrightFlight | None:
     if not combined_text:
         return None
 
+    # 【強力過濾】：如果卡片內包含自行轉機關鍵字，直接捨棄不予解析
+    lower_text = combined_text.lower()
+    excluded_keywords = ["eigener transfer", "self-transfer", "separates ticket", "flughafenwechsel"]
+    if any(kw in lower_text for kw in excluded_keywords):
+        return None
+
     times = re.findall(r"(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})(?:\+\d+)?", inner_text)
     if not times:
         return None
@@ -233,7 +239,6 @@ def _parse_card(card) -> PlaywrightFlight | None:
     if not prices:
         return None
 
-    # 【絕對最低價鎖定】：強制排序並取陣列中的第一個元素（即絕對最小值）
     prices = sorted(list(set(prices)))
     primary_price = prices[0]
     ota_price = prices[1] if len(prices) > 1 else None
@@ -271,6 +276,12 @@ def _parse_global_text(body_text: str) -> list[PlaywrightFlight]:
     blocks = body_text.split("\n")
     for i in range(len(blocks) - 3):
         chunk = "\n".join(blocks[max(0, i-2):min(len(blocks), i+5)])
+        
+        # 全局文本解析同步排除自行轉機
+        chunk_lower = chunk.lower()
+        if any(kw in chunk_lower for kw in ["eigener transfer", "self-transfer", "separates ticket"]):
+            continue
+
         times = re.findall(r"(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})(?:\+\d+)?", chunk)
         prices = _extract_exact_prices(chunk)
         if times and prices:
