@@ -1,4 +1,4 @@
-"""Playwright 終極修復：強制鎖定 Am günstigsten 分頁 + 徹底過濾 Eigener Transfer 自行轉機 (src/playwright_fetcher.py)"""
+"""Playwright 終極修復：智慧型增量滾動與強制載入所有低價航班 (src/playwright_fetcher.py)"""
 from __future__ import annotations
 
 import logging
@@ -9,9 +9,9 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-DEFAULT_MAX_RESULTS = 200
-DEFAULT_SCROLL_COUNT = 50
-DEFAULT_WAIT_MS = 3000
+DEFAULT_MAX_RESULTS = 100
+DEFAULT_SCROLL_COUNT = 25
+DEFAULT_WAIT_MS = 3500
 
 _chromium_checked = False
 
@@ -107,16 +107,27 @@ def fetch_flights(
             # 強制點擊「Am günstigsten」（最便宜）分頁並等待載入
             _force_click_cheapest_tab(page)
 
-            for _ in range(scroll_count):
+            # 【核心升級】：智慧型增量滾動與高度檢測，確保完整載入底部 Air China 航班
+            last_height = 0
+            for i in range(scroll_count):
                 _expand_all_hidden_flights(page)
-                page.evaluate("window.scrollBy(0, 4000)")
+                
+                # 執行平滑往下滾動
+                page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
                 page.wait_for_timeout(DEFAULT_WAIT_MS)
+                
+                # 檢查當前網頁高度
+                current_height = page.evaluate("document.body.scrollHeight")
+                if current_height == last_height:
+                    log.info(f"[SCROLL] 頁面高度已達極限，提前結束滾動（第 {i+1} 輪）。")
+                    break
+                last_height = current_height
 
             cards = page.query_selector_all("li, div[role='listitem']")
             if not cards:
                 cards = page.query_selector_all("div.pIav2d, div.y11eBe, div.gws-flights-results__itinerary-card")
 
-            log.info("檢索到候選卡片數量: %d", len(cards))
+            log.info("檢索到候選卡片總數: %d", len(cards))
 
             for card in cards:
                 try:
@@ -175,7 +186,7 @@ def _force_click_cheapest_tab(page) -> None:
         if tab.count() > 0 and tab.is_visible():
             tab.click(force=True, timeout=5000)
             log.info("[STEALTH] 透過 Locator 成功點擊 'Am günstigsten' 分頁。")
-            page.wait_for_timeout(3500)
+            page.wait_for_timeout(4000)
             return
 
         clicked = page.evaluate(
@@ -193,20 +204,26 @@ def _force_click_cheapest_tab(page) -> None:
         )
         if clicked:
             log.info("[STEALTH] 透過 JS 成功點擊 'Am günstigsten' 分頁。")
-            page.wait_for_timeout(3500)
+            page.wait_for_timeout(4000)
     except Exception as exc:
         log.warning("[STEALTH] 點擊分頁異常：%s", exc)
 
 
 def _expand_all_hidden_flights(page) -> None:
+    """強制點擊所有隱藏航班展開按鈕與 '顯示更多' 觸發器"""
     try:
         page.evaluate(
             """() => {
-                const keywords = ['weitere flüge', 'mehr flüge', 'more flights', 'show more', 'günstigere', 'cheaper', '顯示更多', '更多航班'];
-                const buttons = Array.from(document.querySelectorAll('button, [role="button"]'));
+                const keywords = [
+                    'weitere flüge', 'mehr flüge', 'more flights', 'show more', 
+                    'günstigere', 'cheaper', '顯示更多', '更多航班', 'alle ansehen', 'show all'
+                ];
+                const buttons = Array.from(document.querySelectorAll('button, [role="button"], div[role="button"]'));
                 for (const btn of buttons) {
                     const txt = (btn.innerText || btn.getAttribute('aria-label') || '').toLowerCase();
-                    if (keywords.some(kw => txt.includes(kw))) btn.click();
+                    if (keywords.some(kw => txt.includes(kw))) {
+                        btn.click();
+                    }
                 }
             }"""
         )
@@ -225,7 +242,7 @@ def _parse_card(card) -> PlaywrightFlight | None:
     if not combined_text:
         return None
 
-    # 【強力過濾】：如果卡片內包含自行轉機關鍵字，直接捨棄不予解析
+    # 強力過濾自行轉機
     lower_text = combined_text.lower()
     excluded_keywords = ["eigener transfer", "self-transfer", "separates ticket", "flughafenwechsel"]
     if any(kw in lower_text for kw in excluded_keywords):
@@ -277,7 +294,6 @@ def _parse_global_text(body_text: str) -> list[PlaywrightFlight]:
     for i in range(len(blocks) - 3):
         chunk = "\n".join(blocks[max(0, i-2):min(len(blocks), i+5)])
         
-        # 全局文本解析同步排除自行轉機
         chunk_lower = chunk.lower()
         if any(kw in chunk_lower for kw in ["eigener transfer", "self-transfer", "separates ticket"]):
             continue
