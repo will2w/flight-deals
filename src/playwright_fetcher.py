@@ -1,4 +1,4 @@
-"""Playwright 終極修復：智慧型增量滾動與強制載入所有低價航班 (src/playwright_fetcher.py)"""
+"""Playwright 終極完整版：精準鎖定最便宜分頁、循環點擊展開更多航班與絕對低價擷取 (src/playwright_fetcher.py)"""
 from __future__ import annotations
 
 import logging
@@ -10,8 +10,8 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 DEFAULT_MAX_RESULTS = 100
-DEFAULT_SCROLL_COUNT = 25
-DEFAULT_WAIT_MS = 3500
+DEFAULT_SCROLL_COUNT = 30
+DEFAULT_WAIT_MS = 3000
 
 _chromium_checked = False
 
@@ -104,24 +104,26 @@ def fetch_flights(
             
             _dismiss_consent_dialog(page)
             
-            # 強制點擊「Am günstigsten」（最便宜）分頁並等待載入
+            # 1. 強制點擊「Am günstigsten」（最便宜）分頁
             _force_click_cheapest_tab(page)
 
-            # 【核心升級】：智慧型增量滾動與高度檢測，確保完整載入底部 Air China 航班
+            # 2. 智慧型循環滾動與主動點擊「顯示更多航班」按鈕
             last_height = 0
             for i in range(scroll_count):
                 _expand_all_hidden_flights(page)
                 
-                # 執行平滑往下滾動
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
                 page.wait_for_timeout(DEFAULT_WAIT_MS)
                 
-                # 檢查當前網頁高度
                 current_height = page.evaluate("document.body.scrollHeight")
-                if current_height == last_height:
+                if current_height == last_height and i > 5:
                     log.info(f"[SCROLL] 頁面高度已達極限，提前結束滾動（第 {i+1} 輪）。")
                     break
                 last_height = current_height
+
+            # 最後再次強制點擊展開所有隱藏內容
+            _expand_all_hidden_flights(page)
+            page.wait_for_timeout(2000)
 
             cards = page.query_selector_all("li, div[role='listitem']")
             if not cards:
@@ -210,19 +212,20 @@ def _force_click_cheapest_tab(page) -> None:
 
 
 def _expand_all_hidden_flights(page) -> None:
-    """強制點擊所有隱藏航班展開按鈕與 '顯示更多' 觸發器"""
+    """模擬手動點擊 'Mehr Flüge ansehen' / '顯示更多' 按鈕"""
     try:
         page.evaluate(
             """() => {
                 const keywords = [
-                    'weitere flüge', 'mehr flüge', 'more flights', 'show more', 
-                    'günstigere', 'cheaper', '顯示更多', '更多航班', 'alle ansehen', 'show all'
+                    'mehr flüge', 'weitere flüge', 'more flights', 'show more', 
+                    'günstigere', 'cheaper', '顯示更多', '更多航班', 'alle ansehen', 'show all',
+                    'anschen', 'ansehen'
                 ];
-                const buttons = Array.from(document.querySelectorAll('button, [role="button"], div[role="button"]'));
+                const buttons = Array.from(document.querySelectorAll('button, [role="button"], div[role="button"], span'));
                 for (const btn of buttons) {
                     const txt = (btn.innerText || btn.getAttribute('aria-label') || '').toLowerCase();
                     if (keywords.some(kw => txt.includes(kw))) {
-                        btn.click();
+                        try { btn.click(); } catch (e) {}
                     }
                 }
             }"""
@@ -242,7 +245,7 @@ def _parse_card(card) -> PlaywrightFlight | None:
     if not combined_text:
         return None
 
-    # 強力過濾自行轉機
+    # 強力過濾自行轉機 (Eigener Transfer / Self-transfer)
     lower_text = combined_text.lower()
     excluded_keywords = ["eigener transfer", "self-transfer", "separates ticket", "flughafenwechsel"]
     if any(kw in lower_text for kw in excluded_keywords):
@@ -256,6 +259,7 @@ def _parse_card(card) -> PlaywrightFlight | None:
     if not prices:
         return None
 
+    # 絕對最低價鎖定
     prices = sorted(list(set(prices)))
     primary_price = prices[0]
     ota_price = prices[1] if len(prices) > 1 else None
