@@ -1,4 +1,4 @@
-"""Playwright 終極修復：強制鎖定 Am günstigsten 分頁與精準低價擷取 (src/playwright_fetcher.py)"""
+"""Playwright 終極修復：強制鎖定 Am günstigsten 分頁與絕對最低價鎖定 (src/playwright_fetcher.py)"""
 from __future__ import annotations
 
 import logging
@@ -100,11 +100,11 @@ def fetch_flights(
             page.wait_for_timeout(random.randint(1500, 2500))
             
             page.goto(query_url, wait_until="domcontentloaded", timeout=60000)
-            page.wait_for_timeout(3500)
+            page.wait_for_timeout(4000)
             
             _dismiss_consent_dialog(page)
             
-            # 【關鍵升級】：強力切換至「Am günstigsten」（最便宜）分頁並等待載入
+            # 強制點擊「Am günstigsten」（最便宜）分頁並等待載入
             _force_click_cheapest_tab(page)
 
             for _ in range(scroll_count):
@@ -170,8 +170,14 @@ def _dismiss_consent_dialog(page) -> None:
 
 
 def _force_click_cheapest_tab(page) -> None:
-    """強制以 JS 點擊 'Am günstigsten' 分頁，確保抓到絕對最低價"""
     try:
+        tab = page.locator("[role='tab']:has-text('Am günstigsten'), [role='tab']:has-text('Cheapest')").first
+        if tab.count() > 0 and tab.is_visible():
+            tab.click(force=True, timeout=5000)
+            log.info("[STEALTH] 透過 Locator 成功點擊 'Am günstigsten' 分頁。")
+            page.wait_for_timeout(3500)
+            return
+
         clicked = page.evaluate(
             """() => {
                 const elements = Array.from(document.querySelectorAll('[role="tab"], button, div, span'));
@@ -186,12 +192,10 @@ def _force_click_cheapest_tab(page) -> None:
             }"""
         )
         if clicked:
-            log.info("[STEALTH] 成功切換至 'Am günstigsten' 分頁。")
-            page.wait_for_timeout(3000)  # 等待最便宜排序結果渲染
-        else:
-            log.warning("[STEALTH] 未找到 'Am günstigsten' 分頁按鈕，維持預設檢視。")
+            log.info("[STEALTH] 透過 JS 成功點擊 'Am günstigsten' 分頁。")
+            page.wait_for_timeout(3500)
     except Exception as exc:
-        log.warning("[STEALTH] 切換分頁異常：%s", exc)
+        log.warning("[STEALTH] 點擊分頁異常：%s", exc)
 
 
 def _expand_all_hidden_flights(page) -> None:
@@ -229,6 +233,7 @@ def _parse_card(card) -> PlaywrightFlight | None:
     if not prices:
         return None
 
+    # 【絕對最低價鎖定】：強制排序並取陣列中的第一個元素（即絕對最小值）
     prices = sorted(list(set(prices)))
     primary_price = prices[0]
     ota_price = prices[1] if len(prices) > 1 else None
