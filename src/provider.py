@@ -1,9 +1,16 @@
-"""Google Flights Provider 修正單程參數 (src/provider.py)"""
+"""Google Flights Provider 修正模組路徑與單程參數 (src/provider.py)"""
 from __future__ import annotations
 
 import logging
+import sys
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
+
+# 確保專案根目錄正確加入 sys.path，避免找不到 src.models 模組
+ROOT = Path(__file__).resolve().parent.parent
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 
 from src.playwright_fetcher import fetch_flights
 
@@ -38,7 +45,7 @@ class GoogleFlightsProvider:
         for segment in segments:
             origin, dest, dep_date = segment
             
-            # 【關鍵修復】：根據 trip_type 強制建構單程或來回的查詢字串
+            # 強制根據 trip_type 設定單程或來回查詢
             if trip_type == "one-way":
                 query_str = f"One-way flight from {origin} to {dest} on {dep_date}"
             else:
