@@ -1,4 +1,4 @@
-"""Playwright 終極完整版：精準鎖定最便宜分頁、循環點擊展開更多航班與絕對低價擷取 (src/playwright_fetcher.py)"""
+"""Playwright 終極除錯版：完整診斷卡片文字與價格提取過程 (src/playwright_fetcher.py)"""
 from __future__ import annotations
 
 import logging
@@ -107,11 +107,10 @@ def fetch_flights(
             # 1. 強制點擊「Am günstigsten」（最便宜）分頁
             _force_click_cheapest_tab(page)
 
-            # 2. 智慧型循環滾動與主動點擊「顯示更多航班」按鈕
+            # 2. 循環滾動與點擊展開更多航班
             last_height = 0
             for i in range(scroll_count):
                 _expand_all_hidden_flights(page)
-                
                 page.evaluate("window.scrollTo(0, document.body.scrollHeight);")
                 page.wait_for_timeout(DEFAULT_WAIT_MS)
                 
@@ -121,7 +120,6 @@ def fetch_flights(
                     break
                 last_height = current_height
 
-            # 最後再次強制點擊展開所有隱藏內容
             _expand_all_hidden_flights(page)
             page.wait_for_timeout(2000)
 
@@ -131,13 +129,13 @@ def fetch_flights(
 
             log.info("檢索到候選卡片總數: %d", len(cards))
 
-            for card in cards:
+            for idx, card in enumerate(cards):
                 try:
-                    flight = _parse_card(card)
+                    flight = _parse_card(card, idx)
                     if flight and flight.price is not None and flight.price > 0:
                         flights.append(flight)
                 except Exception as exc:
-                    log.debug("略過卡片：%s", exc)
+                    log.debug("略過卡片 %d：%s", idx, exc)
 
             if not flights:
                 body_text = page.evaluate("() => document.body.innerText") or ""
@@ -212,14 +210,12 @@ def _force_click_cheapest_tab(page) -> None:
 
 
 def _expand_all_hidden_flights(page) -> None:
-    """模擬手動點擊 'Mehr Flüge ansehen' / '顯示更多' 按鈕"""
     try:
         page.evaluate(
             """() => {
                 const keywords = [
                     'mehr flüge', 'weitere flüge', 'more flights', 'show more', 
-                    'günstigere', 'cheaper', '顯示更多', '更多航班', 'alle ansehen', 'show all',
-                    'anschen', 'ansehen'
+                    'günstigere', 'cheaper', '顯示更多', '更多航班', 'alle ansehen', 'show all'
                 ];
                 const buttons = Array.from(document.querySelectorAll('button, [role="button"], div[role="button"], span'));
                 for (const btn of buttons) {
@@ -234,7 +230,7 @@ def _expand_all_hidden_flights(page) -> None:
         pass
 
 
-def _parse_card(card) -> PlaywrightFlight | None:
+def _parse_card(card, card_idx: int) -> PlaywrightFlight | None:
     if card.query_selector("li, div[role='listitem']") is not None:
         return None
 
@@ -245,10 +241,11 @@ def _parse_card(card) -> PlaywrightFlight | None:
     if not combined_text:
         return None
 
-    # 強力過濾自行轉機 (Eigener Transfer / Self-transfer)
+    # 過濾自行轉機
     lower_text = combined_text.lower()
     excluded_keywords = ["eigener transfer", "self-transfer", "separates ticket", "flughafenwechsel"]
     if any(kw in lower_text for kw in excluded_keywords):
+        log.debug("[PARSE] 卡片 %d 包含自行轉機，已過濾。", card_idx)
         return None
 
     times = re.findall(r"(\d{1,2}:\d{2})\s*[–\-—]\s*(\d{1,2}:\d{2})(?:\+\d+)?", inner_text)
@@ -257,12 +254,16 @@ def _parse_card(card) -> PlaywrightFlight | None:
 
     prices = _extract_exact_prices(combined_text)
     if not prices:
+        log.debug("[PARSE] 卡片 %d 未能提取到任何有效價格。原始文字:\n%s", card_idx, inner_text[:200])
         return None
 
-    # 絕對最低價鎖定
     prices = sorted(list(set(prices)))
     primary_price = prices[0]
     ota_price = prices[1] if len(prices) > 1 else None
+
+    # 【DEBUG 核心】：把抓到的價格與對應文字印到日誌中，方便您在前端展開查看
+    log.info("[DEBUG_CARD %d] 提取價格陣列: %s -> 採用主票價: €%s | 航空公司/內容片段: %s", 
+             card_idx, prices, primary_price, inner_text.replace('\n', ' ')[:100])
 
     flight = PlaywrightFlight(
         price=primary_price,
@@ -317,6 +318,7 @@ def _parse_global_text(body_text: str) -> list[PlaywrightFlight]:
 
 
 def _extract_exact_prices(text: str) -> list[int]:
+    # 嚴格匹配帶有 € 或 EUR 的金額格式，避免抓到時長或 CO2 數值
     patterns = [
         r"€\s*([\d.]+)",
         r"([\d.]+)\s*€",
