@@ -1,4 +1,4 @@
-"""Google Flights Provider 修正模組路徑與單程參數 (src/provider.py)"""
+"""Google Flights Provider 修正同目錄模組導入 (src/provider.py)"""
 from __future__ import annotations
 
 import logging
@@ -7,7 +7,6 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-# 確保專案根目錄正確加入 sys.path，避免找不到 src.models 模組
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
@@ -69,7 +68,8 @@ class GoogleFlightsProvider:
 
 
 def _convert_playwright_flight(f: Any, origin: str, dest: str, dep_date: str, trip_type: str) -> Any:
-    from src.models import FlightOffer, FlightSegment
+    # 修正：因為 models.py 與 provider.py 同樣在 src/ 資料夾內，直接從 models 導入即可
+    from models import FlightOffer, FlightSegment
 
     seg = FlightSegment(
         from_airport=f.from_airport or origin,
